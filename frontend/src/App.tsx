@@ -1,10 +1,17 @@
 import { createContext, useContext, useState } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useNavigate } from "react-router-dom";
 import type { ProjectState, Topic, Idea, Scene } from "./types";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import HomePage from "./pages/HomePage";
 import TopicPage from "./pages/TopicPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import PreviewPage from "./pages/PreviewPage";
+import SocialIdeaPage from "./pages/SocialIdeaPage";
+import SocialStudioPage from "./pages/SocialStudioPage";
+import AuthPage from "./pages/AuthPage";
+import DashboardPage from "./pages/DashboardPage";
+import ProfilePage from "./pages/ProfilePage";
+import KnowledgePage from "./pages/KnowledgePage";
 
 interface ProjectContextType {
   state: ProjectState;
@@ -41,7 +48,41 @@ const defaultState: ProjectState = {
 export const ProjectContext = createContext<ProjectContextType>(null!);
 export const useProject = () => useContext(ProjectContext);
 
-export default function App() {
+function UserNav() {
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+
+  if (!user) {
+    return (
+      <button className="btn btn-sm" onClick={() => navigate("/auth")}>
+        Sign In
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <button className="btn btn-sm" onClick={() => navigate("/dashboard")}>
+        Dashboard
+      </button>
+      <button className="btn btn-sm" onClick={() => navigate("/profile")}>
+        Profile
+      </button>
+      <button className="btn btn-sm" onClick={() => navigate("/knowledge")}>
+        Knowledge
+      </button>
+      <button
+        className="btn btn-sm"
+        style={{ opacity: 0.7 }}
+        onClick={async () => { await signOut(); navigate("/"); }}
+      >
+        Sign Out
+      </button>
+    </div>
+  );
+}
+
+function AppContent() {
   const [state, setState] = useState<ProjectState>(defaultState);
 
   const ctx: ProjectContextType = {
@@ -70,20 +111,37 @@ export default function App() {
     <ProjectContext.Provider value={ctx}>
       <div className="app">
         <header className="app-header">
-          <h1 onClick={() => (window.location.href = "/")}>FinContent AI</h1>
-          <span className="tagline">
-            AI-Powered Financial Video Production
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <h1 onClick={() => (window.location.href = "/")}>FinContent AI</h1>
+            <span className="tagline">
+              AI-Powered Financial Content Production
+            </span>
+          </div>
+          <UserNav />
         </header>
         <main className="app-main">
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="/auth" element={<AuthPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/knowledge" element={<KnowledgePage />} />
             <Route path="/topic" element={<TopicPage />} />
             <Route path="/workspace" element={<WorkspacePage />} />
             <Route path="/preview" element={<PreviewPage />} />
+            <Route path="/social/idea" element={<SocialIdeaPage />} />
+            <Route path="/social/studio" element={<SocialStudioPage />} />
           </Routes>
         </main>
       </div>
     </ProjectContext.Provider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

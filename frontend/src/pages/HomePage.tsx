@@ -4,25 +4,48 @@ import { useProject } from "../App";
 import { fetchTopics, searchTopic } from "../api/client";
 import type { Topic } from "../types";
 
+type ContentMode = "video" | "social";
+
+function getCachedTopics(): Topic[] | null {
+  try {
+    const raw = sessionStorage.getItem("trending_topics");
+    if (!raw) return null;
+    const { topics } = JSON.parse(raw);
+    return topics;
+  } catch {}
+  return null;
+}
+
+function setCachedTopics(topics: Topic[]) {
+  sessionStorage.setItem("trending_topics", JSON.stringify({ topics, timestamp: Date.now() }));
+}
+
 export default function HomePage() {
   const navigate = useNavigate();
   const { setTopic } = useProject();
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = getCachedTopics();
+  const [topics, setTopics] = useState<Topic[]>(cached || []);
+  const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState("");
   const [customQuery, setCustomQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  const [contentMode, setContentMode] = useState<ContentMode>("video");
 
   useEffect(() => {
+    if (getCachedTopics()) return;
     fetchTopics()
-      .then((data) => setTopics(data.topics || []))
+      .then((data) => {
+        const t = data.topics || [];
+        setCachedTopics(t);
+        setTopics(t);
+      })
       .catch((e) => setError("Failed to load topics: " + e.message))
       .finally(() => setLoading(false));
   }, []);
 
   const handleSelectTopic = (topic: Topic) => {
     setTopic(topic);
-    navigate("/topic");
+    navigate(contentMode === "video" ? "/topic" : "/social/idea");
   };
 
   const handleSearch = async () => {
@@ -37,7 +60,7 @@ export default function HomePage() {
         sources: data.sources || [],
       };
       setTopic(topic);
-      navigate("/topic");
+      navigate(contentMode === "video" ? "/topic" : "/social/idea");
     } catch (e: any) {
       setError("Search failed: " + e.message);
     } finally {
@@ -47,14 +70,57 @@ export default function HomePage() {
 
   return (
     <div>
+      {/* Content Mode Selector */}
+      <div className="section">
+        <h2 className="section-title">What do you want to create?</h2>
+        <div style={{ display: "flex", gap: 16 }}>
+          <div
+            className="card"
+            onClick={() => setContentMode("video")}
+            style={{
+              flex: 1,
+              cursor: "pointer",
+              border: contentMode === "video" ? "2px solid var(--accent)" : "2px solid transparent",
+              textAlign: "center",
+              padding: "24px 16px",
+            }}
+          >
+            <div style={{ fontSize: 32, marginBottom: 8 }}>&#127909;</div>
+            <h3 style={{ marginBottom: 4 }}>Video</h3>
+            <p className="text-dim text-sm">Create a narrated video for YouTube, Shorts, or Reels</p>
+          </div>
+          <div
+            className="card"
+            onClick={() => setContentMode("social")}
+            style={{
+              flex: 1,
+              cursor: "pointer",
+              border: contentMode === "social" ? "2px solid var(--accent)" : "2px solid transparent",
+              textAlign: "center",
+              padding: "24px 16px",
+            }}
+          >
+            <div style={{ fontSize: 32, marginBottom: 8 }}>&#128240;</div>
+            <h3 style={{ marginBottom: 4 }}>Social Post</h3>
+            <p className="text-dim text-sm">Create image + text posts for LinkedIn, Instagram, or X</p>
+          </div>
+        </div>
+      </div>
+
       <div className="step-indicator">
         <span className="step active">1. Topic Discovery</span>
         <span className="arrow">&rarr;</span>
-        <span className="step">2. Idea & Opinion</span>
+        <span className="step">
+          {contentMode === "video" ? "2. Idea & Opinion" : "2. Social Post Idea"}
+        </span>
         <span className="arrow">&rarr;</span>
-        <span className="step">3. Asset Workstation</span>
+        <span className="step">
+          {contentMode === "video" ? "3. Asset Workstation" : "3. Content Studio"}
+        </span>
         <span className="arrow">&rarr;</span>
-        <span className="step">4. Preview & Export</span>
+        <span className="step">
+          {contentMode === "video" ? "4. Preview & Export" : "4. Copy & Publish"}
+        </span>
       </div>
 
       <div className="section">

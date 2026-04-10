@@ -103,8 +103,11 @@ export default function TopicPage() {
 
   return (
     <div>
+      <div style={{ marginBottom: 8 }}>
+        <button className="btn btn-sm" onClick={() => navigate("/")} style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>&larr; Back to Topics</button>
+      </div>
       <div className="step-indicator">
-        <span className="step">1. Topic Discovery</span>
+        <span className="step" style={{ cursor: "pointer" }} onClick={() => navigate("/")}>1. Topic Discovery</span>
         <span className="arrow">&rarr;</span>
         <span className="step active">2. Idea & Opinion</span>
         <span className="arrow">&rarr;</span>

@@ -27,8 +27,12 @@ ASSETS_DIR.mkdir(exist_ok=True)
 
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
-from routers import topics, idea, opinion, scenes, image, audio, video, metadata
+from routers import (
+    topics, idea, opinion, scenes, image, audio, video, metadata,
+    auth, profile, credits, history, knowledge, social,
+)
 
+# Original content pipeline
 app.include_router(topics.router, prefix="/api")
 app.include_router(idea.router, prefix="/api")
 app.include_router(opinion.router, prefix="/api")
@@ -37,6 +41,16 @@ app.include_router(image.router, prefix="/api")
 app.include_router(audio.router, prefix="/api")
 app.include_router(video.router, prefix="/api")
 app.include_router(metadata.router, prefix="/api")
+
+# Account system
+app.include_router(auth.router, prefix="/api")
+app.include_router(profile.router, prefix="/api")
+app.include_router(credits.router, prefix="/api")
+app.include_router(history.router, prefix="/api")
+app.include_router(knowledge.router, prefix="/api")
+
+# Social post generation
+app.include_router(social.router, prefix="/api")
 
 
 @app.get("/api/health")

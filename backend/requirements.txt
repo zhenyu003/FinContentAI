@@ -5,3 +5,5 @@ httpx
 google-genai
 python-multipart
 pydantic
+supabase
+python-jose[cryptography]

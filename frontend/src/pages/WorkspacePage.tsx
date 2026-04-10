@@ -95,10 +95,13 @@ export default function WorkspacePage() {
 
   return (
     <div>
+      <div style={{ marginBottom: 8 }}>
+        <button className="btn btn-sm" onClick={() => navigate("/topic")} style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>&larr; Back to Idea</button>
+      </div>
       <div className="step-indicator">
-        <span className="step">1. Topic Discovery</span>
+        <span className="step" style={{ cursor: "pointer" }} onClick={() => navigate("/")}>1. Topic Discovery</span>
         <span className="arrow">&rarr;</span>
-        <span className="step">2. Idea & Opinion</span>
+        <span className="step" style={{ cursor: "pointer" }} onClick={() => navigate("/topic")}>2. Idea & Opinion</span>
         <span className="arrow">&rarr;</span>
         <span className="step active">3. Asset Workstation</span>
         <span className="arrow">&rarr;</span>

@@ -32,10 +32,16 @@ body {
 .app-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   padding: 16px 32px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-card);
+}
+
+.btn-sm {
+  padding: 6px 14px;
+  font-size: 13px;
 }
 
 .app-header h1 {
