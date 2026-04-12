@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+httpx
+google-genai
+python-multipart
+pydantic
+supabase
+python-jose[cryptography]
+google-api-python-client
