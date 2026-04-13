@@ -61,7 +61,7 @@ Return the results as JSON with this exact format:
   ]
 }
 
-Return 8-10 of the most important and recent results. Only return valid JSON, no other text.""",
+Return 18-20 of the most important and recent results. Only return valid JSON, no other text.""",
         config=types.GenerateContentConfig(
             tools=[google_search_tool],
             temperature=0.3,

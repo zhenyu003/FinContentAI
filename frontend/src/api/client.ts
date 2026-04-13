@@ -68,13 +68,31 @@ export async function generateImage(prompt: string, aspect_ratio: string) {
   return res.data;
 }
 
+export async function uploadChartImage(dataUrl: string) {
+  const res = await API.post("/image/upload-chart", { data_url: dataUrl });
+  return res.data as { image_url: string };
+}
+
 export async function generateAudio(text: string, voice: string) {
   const res = await API.post("/audio/generate", { text, voice });
   return res.data;
 }
 
+export async function generateMotionClip(params: {
+  description: string;
+  aspect_ratio: string;
+  motion_style: string;
+}) {
+  const res = await API.post("/video/motion-clip", params);
+  return res.data as { video_url: string };
+}
+
+export type VideoSceneInput =
+  | { image_path: string; audio_path: string; narration: string }
+  | { video_clip_path: string; audio_path: string; narration: string };
+
 export async function generateVideo(
-  scenes: { image_path: string; audio_path: string; narration: string }[],
+  scenes: VideoSceneInput[],
   aspect_ratio: string
 ) {
   const res = await API.post("/video/generate", { scenes, aspect_ratio });

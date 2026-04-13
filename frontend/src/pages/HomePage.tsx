@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useProject } from "../App";
 import { fetchTopics, searchTopic, enrichTopics } from "../api/client";
 import type { Topic } from "../types";
+import RankingPanel from "../components/RankingPanel";
 
 type ContentMode = "video" | "social";
 
@@ -11,6 +12,21 @@ function formatNum(n: number | undefined): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
   return n.toLocaleString();
+}
+
+/** Primary: YouTube views (desc). Tie / no data: X views (desc), then title. */
+function compareTopicsByEngagement(a: Topic, b: Topic): number {
+  const ay = a.youtube_views ?? 0;
+  const by = b.youtube_views ?? 0;
+  if (ay !== by) return by - ay;
+  const at = a.twitter_views ?? 0;
+  const bt = b.twitter_views ?? 0;
+  if (at !== bt) return bt - at;
+  return a.title.localeCompare(b.title);
+}
+
+function sortTopicsForDiscovery(list: Topic[]): Topic[] {
+  return [...list].sort(compareTopicsByEngagement);
 }
 
 function getCachedTopics(): Topic[] | null {
@@ -41,6 +57,14 @@ export default function HomePage() {
 
   const hasInsights = (t: Topic) =>
     t.ai_summary != null || t.youtube_views != null || t.twitter_views != null;
+
+  const sortedTopics = useMemo(() => sortTopicsForDiscovery(topics), [topics]);
+  const gridTopics = useMemo(() => sortedTopics.slice(0, 9), [sortedTopics]);
+  const rankedTopics = useMemo(() => sortedTopics.slice(9, 20), [sortedTopics]);
+
+  console.log("Total topics:", sortedTopics.length);
+  console.log("Top 9:", gridTopics.length);
+  console.log("Ranking:", rankedTopics.length);
 
   useEffect(() => {
     const cachedTopics = getCachedTopics();
@@ -186,61 +210,75 @@ export default function HomePage() {
             <p>Loading trending topics...</p>
           </div>
         ) : (
-          <div className="topic-grid">
-            {topics.map((topic, i) => (
-              <div
-                key={i}
-                className="card topic-card"
-                onClick={() => handleSelectTopic(topic)}
-              >
-                <h3>{topic.title}</h3>
-                <p>{topic.summary}</p>
-                {topic.sources?.length > 0 && (
-                  <div className="sources">
-                    {topic.sources.slice(0, 3).map((src, j) => (
-                      <a
-                        key={j}
-                        href={src}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Source {j + 1}
-                      </a>
-                    ))}
-                  </div>
-                )}
-
-                {/* ── Insights section ── */}
-                <div className="topic-insights">
-                  {hasInsights(topic) ? (
-                    <>
-                      <div className="topic-insights-metrics">
-                        <span className="topic-insights-metric" title="YouTube views">
-                          <svg className="icon-yt" viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.9 31.9 0 0 0 0 12a31.9 31.9 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.9 31.9 0 0 0 24 12a31.9 31.9 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.3 3.6-6.3 3.6Z"/></svg>
-                          {formatNum(topic.youtube_views)}
-                        </span>
-                        <span className="topic-insights-metric" title="Twitter / X views">
-                          <svg className="icon-x" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.45-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z"/></svg>
-                          {formatNum(topic.twitter_views)} views
-                        </span>
-                      </div>
-                      {topic.ai_summary && (
-                        <p className="topic-insights-summary">
-                          "{topic.ai_summary}"
-                        </p>
+          <>
+            <p className="topic-grid-eyebrow text-sm text-dim">
+              Top Trending Topics (Ranked by YouTube Engagement)
+            </p>
+            <div className="topic-discovery-layout">
+              <div className="topic-discovery-main">
+                <div className="topic-grid topic-grid--top9">
+                  {gridTopics.map((topic, i) => (
+                    <div
+                      key={`${topic.title}-${i}`}
+                      className="card topic-card"
+                      onClick={() => handleSelectTopic(topic)}
+                    >
+                      <h3>{topic.title}</h3>
+                      <p>{topic.summary}</p>
+                      {topic.sources && topic.sources.length > 0 && (
+                        <div className="sources">
+                          {topic.sources.slice(0, 3).map((src, j) => (
+                            <a
+                              key={j}
+                              href={src}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Source {j + 1}
+                            </a>
+                          ))}
+                        </div>
                       )}
-                    </>
-                  ) : enriching ? (
-                    <div className="topic-insights-loading">
-                      <span className="spinner" />
-                      <span>Loading insights...</span>
+
+                      <div className="topic-insights">
+                        {hasInsights(topic) ? (
+                          <>
+                            <div className="topic-insights-metrics">
+                              <span className="topic-insights-metric" title="YouTube views">
+                                <svg className="icon-yt" viewBox="0 0 24 24" fill="currentColor"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.9 31.9 0 0 0 0 12a31.9 31.9 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.9 31.9 0 0 0 24 12a31.9 31.9 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.3 3.6-6.3 3.6Z"/></svg>
+                                {formatNum(topic.youtube_views)}
+                              </span>
+                              <span className="topic-insights-metric" title="Twitter / X views">
+                                <svg className="icon-x" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.45-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z"/></svg>
+                                {formatNum(topic.twitter_views)} views
+                              </span>
+                            </div>
+                            {topic.ai_summary && (
+                              <p className="topic-insights-summary">
+                                &ldquo;{topic.ai_summary}&rdquo;
+                              </p>
+                            )}
+                          </>
+                        ) : enriching ? (
+                          <div className="topic-insights-loading">
+                            <span className="spinner" />
+                            <span>Loading insights...</span>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
-                  ) : null}
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
+
+              <RankingPanel
+                topics={rankedTopics}
+                onSelect={handleSelectTopic}
+                loading={loading || enriching}
+              />
+            </div>
+          </>
         )}
       </div>
     </div>

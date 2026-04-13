@@ -11,7 +11,8 @@ app = FastAPI(title="FinContent AI API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    # Match any localhost / 127.0.0.1 port so Vite can use 5173, 5174, etc.
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -23,6 +24,7 @@ ASSETS_DIR.mkdir(exist_ok=True)
 (ASSETS_DIR / "images").mkdir(exist_ok=True)
 (ASSETS_DIR / "audio").mkdir(exist_ok=True)
 (ASSETS_DIR / "video").mkdir(exist_ok=True)
+(ASSETS_DIR / "video" / "motions").mkdir(exist_ok=True)
 (ASSETS_DIR / "thumbnails").mkdir(exist_ok=True)
 
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")

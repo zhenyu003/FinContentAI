@@ -12,6 +12,8 @@ const TEMPLATES = [
   { value: "Data Reveal", desc: "Lead with compelling data points and statistics" },
 ];
 
+type TemplateType = "preset" | "custom";
+
 export default function TopicPage() {
   const navigate = useNavigate();
   const {
@@ -26,6 +28,13 @@ export default function TopicPage() {
   const { topic, idea, qaQuestions, qaAnswers, duration, aspectRatio } = state;
 
   const [selectedTemplate, setSelectedTemplate] = useState(TEMPLATES[0].value);
+  const [templateType, setTemplateType] = useState<TemplateType>("preset");
+  const [customFields, setCustomFields] = useState({
+    coreArgument: "",
+    angle: "",
+    hook: "",
+    cta: "",
+  });
   const [loadingIdea, setLoadingIdea] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [opinionText, setOpinionText] = useState("");
@@ -43,19 +52,44 @@ export default function TopicPage() {
     setLoadingIdea(true);
     setError("");
     try {
-      const data = await generateIdea(
-        topic.title,
-        topic.summary,
-        topic.sources,
-        selectedTemplate
-      );
-      setIdea(data as Idea);
+      if (templateType === "custom") {
+        const customIdea: Idea = {
+          narrative_template: "Custom",
+          template_reason: "User-defined narrative structure",
+          core_argument: customFields.coreArgument,
+          angle: customFields.angle,
+          hook: customFields.hook,
+        };
+        setIdea(customIdea);
+      } else {
+        const data = await generateIdea(
+          topic.title,
+          topic.summary,
+          topic.sources,
+          selectedTemplate
+        );
+        setIdea(data as Idea);
+      }
     } catch (e: any) {
       setError("Failed to generate idea: " + e.message);
     } finally {
       setLoadingIdea(false);
     }
   };
+
+  const handleSelectPreset = (value: string) => {
+    setTemplateType("preset");
+    setSelectedTemplate(value);
+  };
+
+  const handleSelectCustom = () => {
+    setTemplateType("custom");
+  };
+
+  const customReady =
+    customFields.coreArgument.trim() !== "" &&
+    customFields.angle.trim() !== "" &&
+    customFields.hook.trim() !== "";
 
   const handleRefine = async () => {
     if (!opinionText.trim()) return;
@@ -140,13 +174,13 @@ export default function TopicPage() {
             {TEMPLATES.map((t) => (
               <label
                 key={t.value}
-                className={`template-option ${selectedTemplate === t.value ? "selected" : ""}`}
+                className={`template-option ${templateType === "preset" && selectedTemplate === t.value ? "selected" : ""}`}
               >
                 <input
                   type="radio"
                   name="template"
-                  checked={selectedTemplate === t.value}
-                  onChange={() => setSelectedTemplate(t.value)}
+                  checked={templateType === "preset" && selectedTemplate === t.value}
+                  onChange={() => handleSelectPreset(t.value)}
                 />
                 <div>
                   <div className="template-option-name">{t.value}</div>
@@ -154,12 +188,93 @@ export default function TopicPage() {
                 </div>
               </label>
             ))}
+
+            {/* Custom Template Card */}
+            <label
+              className={`template-option template-option--custom ${templateType === "custom" ? "selected" : ""}`}
+              style={{
+                borderStyle: templateType === "custom" ? "solid" : "dashed",
+              }}
+            >
+              <input
+                type="radio"
+                name="template"
+                checked={templateType === "custom"}
+                onChange={handleSelectCustom}
+              />
+              <div>
+                <div className="template-option-name">+ Custom Template</div>
+                <div className="text-dim" style={{ fontSize: 12, lineHeight: 1.4 }}>
+                  Create your own narrative structure
+                </div>
+              </div>
+            </label>
           </div>
+
+          {/* Custom Template Panel */}
+          {templateType === "custom" && (
+            <div className="custom-template-panel">
+              <div className="custom-template-fields">
+                <div>
+                  <label className="text-sm text-dim" style={{ display: "block", marginBottom: 4 }}>
+                    Core Argument *
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="What's the main claim or insight?"
+                    value={customFields.coreArgument}
+                    onChange={(e) =>
+                      setCustomFields((f) => ({ ...f, coreArgument: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-dim" style={{ display: "block", marginBottom: 4 }}>
+                    Angle *
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="What unique perspective are you taking?"
+                    value={customFields.angle}
+                    onChange={(e) =>
+                      setCustomFields((f) => ({ ...f, angle: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-dim" style={{ display: "block", marginBottom: 4 }}>
+                    Hook *
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="What's the first sentence to grab attention?"
+                    value={customFields.hook}
+                    onChange={(e) =>
+                      setCustomFields((f) => ({ ...f, hook: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-dim" style={{ display: "block", marginBottom: 4 }}>
+                    CTA (optional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="What action should the audience take?"
+                    value={customFields.cta}
+                    onChange={(e) =>
+                      setCustomFields((f) => ({ ...f, cta: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           <button
             className="btn btn-primary mt-24"
             onClick={handleGenerateIdea}
-            disabled={loadingIdea}
+            disabled={loadingIdea || (templateType === "custom" && !customReady)}
             style={{ padding: "12px 32px" }}
           >
             {loadingIdea ? (

@@ -60,6 +60,56 @@ def generate_srt(scenes: list[dict]) -> str:
     return save_path
 
 
+def create_motion_clip_from_still(
+    image_path: str,
+    aspect_ratio: str = "16:9",
+    motion_style: str = "cinematic",
+    duration_sec: float = 10.0,
+) -> str:
+    """Turn a still image into a short H.264 MP4 with Ken Burns style motion."""
+    resolution_map = {
+        "16:9": (1920, 1080),
+        "9:16": (1080, 1920),
+    }
+    w, h = resolution_map.get(aspect_ratio, (1920, 1080))
+
+    style_params = {
+        "cinematic": ("0.00085", "1.34"),
+        "data-animation": ("0.0014", "1.45"),
+        "infographic": ("0.00055", "1.22"),
+    }
+    inc, zmax = style_params.get(motion_style, style_params["cinematic"])
+
+    # Upscale before zoompan so the virtual camera has room to move.
+    inner_w, inner_h = w * 2, h * 2
+    vf = (
+        f"scale={inner_w}:{inner_h}:force_original_aspect_ratio=decrease,"
+        f"pad={inner_w}:{inner_h}:(ow-iw)/2:(oh-ih)/2,"
+        f"zoompan=z='min(zoom+{inc},{zmax})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps=30,"
+        f"format=yuv420p"
+    )
+
+    out_dir = os.path.join("assets", "video", "motions")
+    _ensure_dir(out_dir)
+    out_path = os.path.join(out_dir, f"{uuid.uuid4().hex}.mp4")
+
+    ip = image_path if os.path.isabs(image_path) else os.path.abspath(image_path)
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1",
+        "-i", ip,
+        "-vf", vf,
+        "-t", str(duration_sec),
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        out_path,
+    ]
+    subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return out_path.replace("\\", "/")
+
+
 def _get_audio_duration(audio_path: str) -> float:
     """Get the duration of an audio file using ffprobe."""
     try:
@@ -83,10 +133,11 @@ def _get_audio_duration(audio_path: str) -> float:
 def synthesize_video(scenes: list[dict], aspect_ratio: str = "16:9") -> str:
     """Synthesize a video from scenes with images, audio, and subtitles.
 
-    Each scene should have 'image_path', 'audio_path', and 'narration' keys.
+    Each scene needs 'audio_path', 'narration', and either 'image_path' or
+    'video_clip_path' (a short MP4 to loop for the length of the narration audio).
 
     Args:
-        scenes: List of scene dicts with image_path, audio_path, and narration.
+        scenes: List of scene dicts with paths and narration.
         aspect_ratio: Either "16:9" or "9:16".
 
     Returns:
@@ -108,30 +159,47 @@ def synthesize_video(scenes: list[dict], aspect_ratio: str = "16:9") -> str:
     try:
         # Step 1: Create a video segment for each scene
         for i, scene in enumerate(scenes):
-            image_path = scene.get("image_path", "")
+            image_path = scene.get("image_path") or ""
+            video_clip_path = scene.get("video_clip_path") or ""
             audio_path = scene.get("audio_path", "")
 
-            if not image_path or not audio_path:
-                print(f"Skipping scene {i + 1}: missing image or audio path")
+            if not audio_path or (not image_path and not video_clip_path):
+                print(f"Skipping scene {i + 1}: missing visual or audio path")
                 continue
 
             segment_path = os.path.join(save_dir, f"segment_{output_id}_{i}.mp4")
             segment_paths.append(segment_path)
 
-            cmd = [
-                "ffmpeg", "-y",
-                "-loop", "1",
-                "-i", image_path,
-                "-i", audio_path,
-                "-c:v", "libx264",
-                "-tune", "stillimage",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-pix_fmt", "yuv420p",
-                "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
-                "-shortest",
-                segment_path,
-            ]
+            if video_clip_path:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-stream_loop", "-1",
+                    "-i", video_clip_path,
+                    "-i", audio_path,
+                    "-c:v", "libx264",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-pix_fmt", "yuv420p",
+                    "-r", "30",
+                    "-shortest",
+                    segment_path,
+                ]
+            else:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-loop", "1",
+                    "-i", image_path,
+                    "-i", audio_path,
+                    "-c:v", "libx264",
+                    "-tune", "stillimage",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-pix_fmt", "yuv420p",
+                    "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+                    "-r", "30",
+                    "-shortest",
+                    segment_path,
+                ]
 
             subprocess.run(cmd, capture_output=True, text=True, check=True)
 
