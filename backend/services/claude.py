@@ -48,6 +48,90 @@ def _call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3) -> str
             raise
 
 
+def _normalize_narrative_template(data: dict, user_input: str) -> dict:
+    """Ensure required keys and beat shape; fill gaps from user_input."""
+    name = str(data.get("name") or "Untitled template").strip() or "Untitled template"
+    tone = str(data.get("tone") or "professional").strip() or "professional"
+    tags = data.get("style_tags")
+    if not isinstance(tags, list):
+        tags = []
+    style_tags = [str(t).strip() for t in tags if str(t).strip()][:12]
+    if not style_tags:
+        style_tags = ["financial", "story-driven"]
+
+    beats_raw = data.get("beats")
+    beats = []
+    if isinstance(beats_raw, list):
+        for i, b in enumerate(beats_raw):
+            if not isinstance(b, dict):
+                continue
+            bid = str(b.get("id") or str(i + 1)).strip() or str(i + 1)
+            purpose = str(b.get("purpose") or f"Beat {i + 1}").strip() or f"Beat {i + 1}"
+            instruction = str(b.get("instruction") or purpose).strip() or purpose
+            beats.append({"id": bid, "purpose": purpose, "instruction": instruction})
+
+    if not beats:
+        snippet = (user_input or "the topic").strip()[:120]
+        beats = [
+            {
+                "id": "1",
+                "purpose": "Hook",
+                "instruction": f"Open with tension or a question grounded in: {snippet}",
+            },
+            {
+                "id": "2",
+                "purpose": "Context",
+                "instruction": "Establish what the audience needs to know before the payoff.",
+            },
+            {
+                "id": "3",
+                "purpose": "Insight",
+                "instruction": "Deliver the core insight the viewer should remember.",
+            },
+            {
+                "id": "4",
+                "purpose": "CTA",
+                "instruction": "Close with a clear next step or reflection prompt.",
+            },
+        ]
+    return {"name": name, "tone": tone, "style_tags": style_tags, "beats": beats}
+
+
+def _fallback_narrative_template(user_input: str) -> dict:
+    return _normalize_narrative_template({}, user_input)
+
+
+def generate_narrative_template(user_input: str) -> dict:
+    """Generate a structured narrative template from natural-language intent."""
+    system_prompt = """You are a narrative architect for financial and business video content.
+Generate a structured storytelling template based on the user's description.
+Always respond with valid JSON only — no markdown fences, no other text."""
+
+    user_prompt = f"""User's storytelling intent:
+{user_input.strip()}
+
+Output JSON with exactly this shape:
+{{
+  "name": "Short memorable template name",
+  "tone": "e.g. urgent, analytical, conversational",
+  "style_tags": ["tag1", "tag2"],
+  "beats": [
+    {{ "id": "1", "purpose": "Hook — introduce conflict", "instruction": "What to cover in this beat" }}
+  ]
+}}
+
+Use 4–8 beats in order. Each beat needs id (string), purpose (short label + dash + one line), and instruction (concrete guidance for the writer)."""
+
+    try:
+        response_text = _call_llm(system_prompt, user_prompt)
+        parsed = _parse_json_response(response_text)
+        if not isinstance(parsed, dict):
+            raise ValueError("Expected object")
+        return _normalize_narrative_template(parsed, user_input)
+    except Exception:
+        return _fallback_narrative_template(user_input)
+
+
 def generate_idea(
     topic_title: str,
     topic_summary: str,
@@ -153,12 +237,20 @@ Always respond with valid JSON only, no other text."""
             elif isinstance(qa, str) and qa.strip():
                 qa_text += f"Answer {i+1}: {qa}\n\n"
 
+    structure_note = ""
+    if isinstance(idea, dict) and idea.get("narrative_structure"):
+        structure_note = (
+            "\nThe idea includes narrative_structure with ordered beats — follow that spine for "
+            "scene order, emphasis, and pacing (you may merge beats into one scene when needed).\n"
+        )
+
     user_prompt = f"""Create a scene-by-scene breakdown for a financial YouTube video.
 
 Topic: {topic_title}
 Summary: {topic_summary}
 Content Idea: {json.dumps(idea)}
 Narrative Template: {narrative_template}
+{structure_note}
 Creator's Opinion: {user_opinion}
 Q&A Refinement:
 {qa_text}

@@ -5,11 +5,11 @@ import {
   generateImage,
   generateAudio,
   generateVideo,
-  generateMotionClip,
+  generateMotionVeo,
   uploadChartImage,
   BACKEND,
 } from "../api/client";
-import type { SceneMode, ChartConfig, MotionStyle } from "../types";
+import type { SceneMode, ChartConfig } from "../types";
 import ChartConfigPanel from "../components/ChartConfigPanel";
 
 const VOICES = ["Kore", "Charon", "Fenrir", "Aoede", "Puck", "Leda"];
@@ -18,12 +18,6 @@ const SCENE_MODES: { value: SceneMode; label: string }[] = [
   { value: "chart", label: "Chart" },
   { value: "motion", label: "Motion" },
 ];
-const MOTION_STYLES: { value: MotionStyle; label: string }[] = [
-  { value: "cinematic", label: "Cinematic" },
-  { value: "data-animation", label: "Data Animation" },
-  { value: "infographic", label: "Infographic" },
-];
-
 export default function WorkspacePage() {
   const navigate = useNavigate();
   const { state, updateScene, setVideoUrl } = useProject();
@@ -38,25 +32,23 @@ export default function WorkspacePage() {
   const [error, setError] = useState("");
   const [sceneModes, setSceneModes] = useState<Record<number, SceneMode>>({});
   const [chartDataUrls, setChartDataUrls] = useState<Record<number, string>>({});
-  const [motionStyles, setMotionStyles] = useState<Record<number, MotionStyle>>({});
   const [loadingMotion, setLoadingMotion] = useState<Record<number, boolean>>({});
 
   const getSceneMode = (i: number): SceneMode => sceneModes[i] ?? "image";
 
   const setSceneModeFor = (i: number, mode: SceneMode) => {
     setSceneModes((prev) => ({ ...prev, [i]: mode }));
+    updateScene(i, { mode, type: mode });
   };
-
-  const getMotionStyle = (i: number): MotionStyle => motionStyles[i] ?? "cinematic";
 
   const handleChartImage = useCallback(
     async (index: number, dataUrl: string, config: ChartConfig) => {
       setChartDataUrls((prev) => ({ ...prev, [index]: dataUrl }));
       try {
         const { image_url } = await uploadChartImage(dataUrl);
-        updateScene(index, { image_url, chartConfig: config, mode: "chart" });
+        updateScene(index, { image_url, chartConfig: config, mode: "chart", type: "chart" });
       } catch {
-        updateScene(index, { image_url: dataUrl, chartConfig: config, mode: "chart" });
+        updateScene(index, { image_url: dataUrl, chartConfig: config, mode: "chart", type: "chart" });
       }
     },
     [updateScene],
@@ -65,19 +57,20 @@ export default function WorkspacePage() {
   const handleGenMotion = async (index: number) => {
     setLoadingMotion((s) => ({ ...s, [index]: true }));
     try {
-      const style = getMotionStyle(index);
-      const { video_url } = await generateMotionClip({
-        description: scenes[index].description,
+      const scene = scenes[index];
+      const { video_url } = await generateMotionVeo({
+        description: scene.description,
+        narration: scene.narration,
         aspect_ratio: aspectRatio,
-        motion_style: style,
       });
       updateScene(index, {
         motion_url: video_url,
         mode: "motion",
-        motionStyle: style,
+        type: "motion",
       });
-    } catch (e: any) {
-      setError(`Motion gen failed for scene ${index + 1}: ${e.message}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Motion (Veo) failed for scene ${index + 1}: ${msg}`);
     } finally {
       setLoadingMotion((s) => ({ ...s, [index]: false }));
     }
@@ -92,7 +85,7 @@ export default function WorkspacePage() {
     setLoadingImg((s) => ({ ...s, [index]: true }));
     try {
       const data = await generateImage(scenes[index].description, aspectRatio);
-      updateScene(index, { image_url: data.image_url });
+      updateScene(index, { image_url: data.image_url, type: "image", mode: "image" });
     } catch (e: any) {
       setError(`Image gen failed for scene ${index + 1}: ${e.message}`);
     } finally {
@@ -319,8 +312,9 @@ export default function WorkspacePage() {
                   {getSceneMode(i) === "motion" && (
                     <>
                       {loadingMotion[i] && (
-                        <p className="text-sm text-dim" style={{ margin: "8px 0" }}>
-                          Generating animation...
+                        <p className="text-sm text-dim" style={{ margin: "8px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className="spinner" />
+                          Generating AI video...
                         </p>
                       )}
                       {!loadingMotion[i] && scene.motion_url && (
@@ -330,39 +324,27 @@ export default function WorkspacePage() {
                           loop
                           playsInline
                           style={{ width: "100%", maxHeight: 220, borderRadius: 6 }}
-                        >
-                          <source src={BACKEND + scene.motion_url} type="video/mp4" />
-                        </video>
+                          src={BACKEND + scene.motion_url}
+                        />
                       )}
-                      <div style={{ marginBottom: 6 }}>
-                        <label className="text-dim" style={{ fontSize: 10, display: "block", marginBottom: 3 }}>
-                          Motion Type
-                        </label>
-                        <select
-                          value={getMotionStyle(i)}
-                          onChange={(e) =>
-                            setMotionStyles((prev) => ({ ...prev, [i]: e.target.value as MotionStyle }))
-                          }
-                          style={{ width: "100%", fontSize: 11, padding: "4px 8px" }}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => handleGenMotion(i)}
+                          disabled={loadingMotion[i] || !!scene.motion_url}
                         >
-                          {MOTION_STYLES.map((ms) => (
-                            <option key={ms.value} value={ms.value}>{ms.label}</option>
-                          ))}
-                        </select>
+                          Generate Motion
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => handleGenMotion(i)}
+                          disabled={loadingMotion[i] || !scene.motion_url}
+                        >
+                          Regenerate Motion
+                        </button>
                       </div>
-                      <button
-                        className="btn btn-sm btn-secondary"
-                        onClick={() => handleGenMotion(i)}
-                        disabled={loadingMotion[i]}
-                      >
-                        {loadingMotion[i] ? (
-                          <span className="spinner" />
-                        ) : scene.motion_url ? (
-                          "Regenerate Motion"
-                        ) : (
-                          "Generate Motion"
-                        )}
-                      </button>
                     </>
                   )}
                 </td>

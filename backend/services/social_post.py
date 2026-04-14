@@ -67,6 +67,7 @@ def generate_social_idea(
     profile_context: str = "",
     knowledge_context: str = "",
     narrative_template: str | None = None,
+    social_template: dict | None = None,
 ) -> dict:
     """Generate a content idea optimized for social media posts."""
     context_block = _build_context_block(profile_context, knowledge_context)
@@ -78,12 +79,33 @@ Always respond with valid JSON only, no other text.{context_block}"""
     sources_text = "\n".join(sources) if sources else "No sources provided"
 
     template_instruction = ""
-    if narrative_template:
+    narrative_name_hint = narrative_template
+    if social_template and isinstance(social_template, dict):
+        tpl_name = str(social_template.get("name") or "Custom").strip()
+        narrative_name_hint = narrative_name_hint or tpl_name
+        template_instruction = f"""
+IMPORTANT: The user defined a CUSTOM SOCIAL POST TEMPLATE (single post — not a video script).
+You MUST shape core_argument, angle, hook, and template_reason to follow this arc and tone.
+
+Custom template (JSON):
+{json.dumps(social_template, ensure_ascii=False)}
+
+Rules:
+- Set narrative_template to exactly: "{tpl_name}"
+- template_reason should reference the template's tone and platform_style.
+- core_argument, angle, and hook must align with the structure sections in order (hook-style opening through CTA intent).
+- suggested_platforms should prefer platforms implied by platform_style when possible (linkedin / instagram / x lowercase).
+"""
+    elif narrative_template:
+        narrative_name_hint = narrative_name_hint or narrative_template
         template_instruction = (
             f'\nIMPORTANT: The user has chosen the "{narrative_template}" narrative template. '
             f"You MUST use this template and tailor the core argument, angle, and hook to fit "
             f'the "{narrative_template}" style. Set narrative_template to exactly "{narrative_template}".'
         )
+
+    if not narrative_name_hint:
+        narrative_name_hint = "A short name for the content approach"
 
     user_prompt = f"""Given this financial topic:
 Title: {topic_title}
@@ -94,7 +116,7 @@ Generate a compelling content idea for social media posts about this topic. The 
 
 Return JSON with this exact format:
 {{
-  "narrative_template": "{narrative_template or "A short name for the content approach"}",
+  "narrative_template": "{narrative_name_hint}",
   "template_reason": "1 sentence explaining why this template fits the topic",
   "core_argument": "The central thesis in 1-2 sentences",
   "angle": "The unique perspective or hook that differentiates this from other coverage",
@@ -172,12 +194,21 @@ Always respond with valid JSON only, no other text.{context_block}"""
 
     opinion_section = f"\nCreator's Opinion: {user_opinion}" if user_opinion else ""
 
+    template_extra = ""
+    st = idea.get("social_post_template") if isinstance(idea, dict) else None
+    if st:
+        template_extra = (
+            "\nThe creator used a CUSTOM SOCIAL POST TEMPLATE — keep the same narrative arc, "
+            "tone, and platform emphasis when writing each platform's post:\n"
+            f"{json.dumps(st, ensure_ascii=False)}\n"
+        )
+
     user_prompt = f"""Create social media content for this financial topic:
 
 Topic: {topic_title}
 Summary: {topic_summary}
 Content Idea: {json.dumps(idea)}
-Style: {style}{opinion_section}
+Style: {style}{opinion_section}{template_extra}
 
 Platform requirements:
 {chr(10).join(platform_instructions)}

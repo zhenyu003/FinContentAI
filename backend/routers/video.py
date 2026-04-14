@@ -1,10 +1,10 @@
-import os
+import asyncio
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, model_validator
 
-from services.dalle import generate_image
-from services.ffmpeg import create_motion_clip_from_still, synthesize_video
+from services.ffmpeg import synthesize_video
+from services.veo import build_veo_prompt, generate_motion_video
 
 router = APIRouter(prefix="/video", tags=["video"])
 
@@ -27,10 +27,24 @@ class GenerateVideoRequest(BaseModel):
     aspect_ratio: str = "16:9"
 
 
-class GenerateMotionRequest(BaseModel):
-    description: str
+class MotionVeoRequest(BaseModel):
+    """Either send a ready-made `prompt` or `description` + `narration` to build one."""
+
+    prompt: str | None = None
+    description: str | None = None
+    narration: str | None = None
     aspect_ratio: str = "16:9"
-    motion_style: str = "cinematic"
+
+    def resolved_prompt(self) -> str:
+        if self.prompt and self.prompt.strip():
+            return self.prompt.strip()
+        scene = {
+            "description": (self.description or "").strip(),
+            "narration": (self.narration or "").strip(),
+        }
+        if not scene["description"] and not scene["narration"]:
+            raise ValueError("Provide prompt or description/narration")
+        return build_veo_prompt(scene)
 
 
 @router.post("/generate")
@@ -47,37 +61,18 @@ async def create_video(request: GenerateVideoRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/motion-clip")
-async def create_motion_clip(request: GenerateMotionRequest):
-    """Generate a playable motion clip (MP4). Uses one internal keyframe then FFmpeg motion."""
+@router.post("/motion-veo")
+async def create_motion_veo(request: MotionVeoRequest):
+    """AI motion clip via Google Veo (no image pipeline, no FFmpeg animation)."""
     try:
-        style = request.motion_style or "cinematic"
-        keyframe_prompt = (
-            f"Cinematic keyframe for a short animated clip ({style}): "
-            f"high detail, coherent composition, suitable for subtle camera motion. "
-            f"{request.description}"
+        prompt = request.resolved_prompt()
+        ar = request.aspect_ratio
+        rel = await asyncio.to_thread(
+            lambda: generate_motion_video(prompt, aspect_ratio=ar),
         )
-        image_rel = generate_image(
-            prompt=keyframe_prompt,
-            aspect_ratio=request.aspect_ratio,
-        )
-        image_abs = (
-            image_rel
-            if os.path.isabs(image_rel)
-            else os.path.abspath(image_rel)
-        )
-        clip_rel = create_motion_clip_from_still(
-            image_abs,
-            aspect_ratio=request.aspect_ratio,
-            motion_style=style,
-            duration_sec=10.0,
-        )
-        try:
-            if os.path.isfile(image_abs):
-                os.remove(image_abs)
-        except OSError:
-            pass
-        url = "/" + clip_rel.replace("\\", "/")
+        url = "/" + rel.replace("\\", "/")
         return {"video_url": url}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

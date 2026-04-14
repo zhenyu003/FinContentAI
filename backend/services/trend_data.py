@@ -317,6 +317,18 @@ def _mock_twitter_views(topic_title: str) -> int:
     return rng.randint(200_000, 3_000_000)
 
 
+def apply_topic_metric_fallbacks(topics: list[dict]) -> None:
+    """Fill missing engagement fields when enrichment times out or fails."""
+    for t in topics:
+        title = t.get("title", "")
+        if not t.get("youtube_views"):
+            t["youtube_views"] = _mock_youtube_views(title)
+        if not t.get("twitter_views"):
+            t["twitter_views"] = _mock_twitter_views(title)
+        if not t.get("ai_summary"):
+            t["ai_summary"] = (t.get("summary") or "")[:400]
+
+
 def enrich_topics_with_insights(topics: list[dict]) -> list[dict]:
     """
     Take a list of existing topic dicts (title, summary, sources) and bolt on:

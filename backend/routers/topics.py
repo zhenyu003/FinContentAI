@@ -1,12 +1,17 @@
 import os
+import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from services.gemini import search_trending_topics, search_custom_topic
-from services.trend_data import enrich_topics_with_insights
+from services.gemini import (
+    generate_trending_topics_fast,
+    search_trending_topics,
+    search_custom_topic,
+)
+from services.trend_data import enrich_topics_with_insights, apply_topic_metric_fallbacks
 
 logger = logging.getLogger(__name__)
 
@@ -128,31 +133,76 @@ class EnrichRequest(BaseModel):
     topics: list[dict]
 
 
+# Fast path: plain Gemini JSON (seconds). Slow path: Google Search grounding (can hang the worker).
+_TRENDING_FAST_DEADLINE_SEC = 28.0
+_TRENDING_GROUNDED_DEADLINE_SEC = 42.0
+
+
 @router.get("")
-async def get_trending_topics():
+async def get_trending_topics(
+    live_search: bool = Query(
+        False,
+        description="If true, use Google Search grounding (slow); default is fast generation.",
+    ),
+):
     if not _gemini_available():
         logger.warning("GEMINI_API_KEY not set — returning fallback topics")
         return {"topics": FALLBACK_TOPICS}
+
+    if live_search:
+        try:
+            topics = await asyncio.wait_for(
+                asyncio.to_thread(search_trending_topics),
+                timeout=_TRENDING_GROUNDED_DEADLINE_SEC,
+            )
+            if not topics:
+                return {"topics": FALLBACK_TOPICS}
+            return {"topics": topics}
+        except asyncio.TimeoutError:
+            logger.warning("Grounded trending topics timed out — using static fallback")
+            return {"topics": FALLBACK_TOPICS}
+        except Exception as e:
+            logger.error("Grounded trending topics failed: %s", e)
+            return {"topics": FALLBACK_TOPICS}
+
     try:
-        topics = search_trending_topics()
+        topics = await asyncio.wait_for(
+            asyncio.to_thread(generate_trending_topics_fast),
+            timeout=_TRENDING_FAST_DEADLINE_SEC,
+        )
+        if not topics:
+            return {"topics": FALLBACK_TOPICS}
         return {"topics": topics}
-    except Exception as e:
-        logger.error("Gemini trending topics failed, using fallback: %s", e)
+    except asyncio.TimeoutError:
+        logger.warning("Fast trending topics timed out — returning static fallback")
         return {"topics": FALLBACK_TOPICS}
+    except Exception as e:
+        logger.error("Fast trending topics failed, using fallback: %s", e)
+        return {"topics": FALLBACK_TOPICS}
+
+
+_ENRICH_DEADLINE_SEC = 55.0
 
 
 @router.post("/enrich")
 async def enrich_topics(body: EnrichRequest):
     """Enrich a list of topics with YouTube views, Twitter views, and AI summaries."""
     try:
-        enriched = enrich_topics_with_insights(body.topics)
+        enriched = await asyncio.wait_for(
+            asyncio.to_thread(enrich_topics_with_insights, body.topics),
+            timeout=_ENRICH_DEADLINE_SEC,
+        )
         return {"topics": enriched}
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Topic enrichment exceeded %.0fs — returning partially enriched list",
+            _ENRICH_DEADLINE_SEC,
+        )
+        apply_topic_metric_fallbacks(body.topics)
+        return {"topics": body.topics}
     except Exception as e:
         logger.error("Topic enrichment failed: %s", e)
-        for t in body.topics:
-            t.setdefault("youtube_views", 0)
-            t.setdefault("twitter_views", 0)
-            t.setdefault("ai_summary", "")
+        apply_topic_metric_fallbacks(body.topics)
         return {"topics": body.topics}
 
 
