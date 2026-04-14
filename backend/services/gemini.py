@@ -37,6 +37,35 @@ def _extract_sources(candidate) -> list[str]:
     return sources
 
 
+def generate_trending_topics_fast() -> list[dict]:
+    """Generate plausible finance episode topics without Google Search (seconds, reliable).
+
+    Grounded search can block for minutes; the home feed uses this path by default.
+    """
+    client = _get_client()
+    response = client.models.generate_content(
+        model=MODEL,
+        contents="""You help finance YouTubers choose episode topics. Propose plausible, timely-feeling financial story ideas (themes may reflect real markets; you are not browsing the web).
+
+Cover variety: Fed & rates, megacap tech, AI semiconductors, crypto/ETFs, CRE/banks, oil & energy, earnings, consumer, EM flows, cybersecurity, M&A.
+
+Return JSON only with this exact shape:
+{
+  "topics": [
+    {"title": "Short headline-style title", "summary": "2-3 sentence summary for the creator"}
+  ]
+}
+
+Return exactly 20 topics with distinct titles (home UI shows top 9 plus ranks 10–20). Valid JSON only, no markdown fences.""",
+        config=types.GenerateContentConfig(temperature=0.45),
+    )
+    parsed = _parse_json_response(response.text)
+    topics = parsed.get("topics", [])
+    for topic in topics:
+        topic.setdefault("sources", [])
+    return topics
+
+
 def search_trending_topics() -> list[dict]:
     """Search for trending financial news topics using Gemini with Google Search grounding."""
     client = _get_client()
@@ -61,7 +90,7 @@ Return the results as JSON with this exact format:
   ]
 }
 
-Return 8-10 of the most important and recent results. Only return valid JSON, no other text.""",
+Return 12–15 of the most important and recent results (fewer is better than incomplete JSON). Only return valid JSON, no other text.""",
         config=types.GenerateContentConfig(
             tools=[google_search_tool],
             temperature=0.3,

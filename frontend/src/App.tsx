@@ -12,6 +12,7 @@ import AuthPage from "./pages/AuthPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProfilePage from "./pages/ProfilePage";
 import KnowledgePage from "./pages/KnowledgePage";
+import TrendExplorerPage from "./pages/TrendExplorerPage";
 
 interface ProjectContextType {
   state: ProjectState;
@@ -71,6 +72,9 @@ function UserNav() {
       <button className="btn btn-sm" onClick={() => navigate("/knowledge")}>
         Knowledge
       </button>
+      <button className="btn btn-sm" onClick={() => navigate("/trends")}>
+        Trends
+      </button>
       <button
         className="btn btn-sm"
         style={{ opacity: 0.7 }}
@@ -129,6 +133,7 @@ function AppContent() {
             <Route path="/topic" element={<TopicPage />} />
             <Route path="/workspace" element={<WorkspacePage />} />
             <Route path="/preview" element={<PreviewPage />} />
+            <Route path="/trends" element={<TrendExplorerPage />} />
             <Route path="/social/idea" element={<SocialIdeaPage />} />
             <Route path="/social/studio" element={<SocialStudioPage />} />
           </Routes>

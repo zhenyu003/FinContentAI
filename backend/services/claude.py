@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 from google import genai
 from google.genai import types
 
@@ -23,21 +24,119 @@ def _parse_json_response(text: str):
     return json.loads(cleaned)
 
 
-def _call_llm(system_prompt: str, user_prompt: str) -> str:
-    """Make a call to Gemini and return the text response."""
+def _call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3) -> str:
+    """Make a call to Gemini with automatic retry on transient errors."""
     client = _get_client()
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=user_prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.7,
-        ),
-    )
-    return response.text
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.7,
+                ),
+            )
+            return response.text
+        except Exception as e:
+            err_str = str(e)
+            is_transient = any(code in err_str for code in ["503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED"])
+            if is_transient and attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise
 
 
-def generate_idea(topic_title: str, topic_summary: str, sources: list[str]) -> dict:
+def _normalize_narrative_template(data: dict, user_input: str) -> dict:
+    """Ensure required keys and beat shape; fill gaps from user_input."""
+    name = str(data.get("name") or "Untitled template").strip() or "Untitled template"
+    tone = str(data.get("tone") or "professional").strip() or "professional"
+    tags = data.get("style_tags")
+    if not isinstance(tags, list):
+        tags = []
+    style_tags = [str(t).strip() for t in tags if str(t).strip()][:12]
+    if not style_tags:
+        style_tags = ["financial", "story-driven"]
+
+    beats_raw = data.get("beats")
+    beats = []
+    if isinstance(beats_raw, list):
+        for i, b in enumerate(beats_raw):
+            if not isinstance(b, dict):
+                continue
+            bid = str(b.get("id") or str(i + 1)).strip() or str(i + 1)
+            purpose = str(b.get("purpose") or f"Beat {i + 1}").strip() or f"Beat {i + 1}"
+            instruction = str(b.get("instruction") or purpose).strip() or purpose
+            beats.append({"id": bid, "purpose": purpose, "instruction": instruction})
+
+    if not beats:
+        snippet = (user_input or "the topic").strip()[:120]
+        beats = [
+            {
+                "id": "1",
+                "purpose": "Hook",
+                "instruction": f"Open with tension or a question grounded in: {snippet}",
+            },
+            {
+                "id": "2",
+                "purpose": "Context",
+                "instruction": "Establish what the audience needs to know before the payoff.",
+            },
+            {
+                "id": "3",
+                "purpose": "Insight",
+                "instruction": "Deliver the core insight the viewer should remember.",
+            },
+            {
+                "id": "4",
+                "purpose": "CTA",
+                "instruction": "Close with a clear next step or reflection prompt.",
+            },
+        ]
+    return {"name": name, "tone": tone, "style_tags": style_tags, "beats": beats}
+
+
+def _fallback_narrative_template(user_input: str) -> dict:
+    return _normalize_narrative_template({}, user_input)
+
+
+def generate_narrative_template(user_input: str) -> dict:
+    """Generate a structured narrative template from natural-language intent."""
+    system_prompt = """You are a narrative architect for financial and business video content.
+Generate a structured storytelling template based on the user's description.
+Always respond with valid JSON only — no markdown fences, no other text."""
+
+    user_prompt = f"""User's storytelling intent:
+{user_input.strip()}
+
+Output JSON with exactly this shape:
+{{
+  "name": "Short memorable template name",
+  "tone": "e.g. urgent, analytical, conversational",
+  "style_tags": ["tag1", "tag2"],
+  "beats": [
+    {{ "id": "1", "purpose": "Hook — introduce conflict", "instruction": "What to cover in this beat" }}
+  ]
+}}
+
+Use 4–8 beats in order. Each beat needs id (string), purpose (short label + dash + one line), and instruction (concrete guidance for the writer)."""
+
+    try:
+        response_text = _call_llm(system_prompt, user_prompt)
+        parsed = _parse_json_response(response_text)
+        if not isinstance(parsed, dict):
+            raise ValueError("Expected object")
+        return _normalize_narrative_template(parsed, user_input)
+    except Exception:
+        return _fallback_narrative_template(user_input)
+
+
+def generate_idea(
+    topic_title: str,
+    topic_summary: str,
+    sources: list[str],
+    narrative_template: str | None = None,
+) -> dict:
     """Generate a content idea with narrative template recommendation."""
     system_prompt = """You are an expert financial content strategist for YouTube.
 You specialize in creating viral financial video concepts.
@@ -45,12 +144,20 @@ Always respond with valid JSON only, no other text."""
 
     sources_text = "\n".join(sources) if sources else "No sources provided"
 
+    template_instruction = ""
+    if narrative_template:
+        template_instruction = (
+            f'\nIMPORTANT: The user has chosen the "{narrative_template}" narrative template. '
+            f"You MUST use this template and tailor the core argument, angle, and hook to fit "
+            f'the "{narrative_template}" style. Set narrative_template to exactly "{narrative_template}".\n'
+        )
+
     user_prompt = f"""Given this financial topic:
 Title: {topic_title}
 Summary: {topic_summary}
 Sources: {sources_text}
-
-Generate a compelling content idea for a YouTube financial video. Choose the most fitting narrative template from these 5 options:
+{template_instruction}
+Generate a compelling content idea for a YouTube financial video. The 5 possible narrative templates are:
 1. Counterintuitive - Challenges common wisdom with surprising data
 2. Anxiety-Driven - Addresses financial fears with actionable solutions
 3. Company Breakdown - Deep dive into a company's strategy, financials, or pivot
@@ -59,7 +166,7 @@ Generate a compelling content idea for a YouTube financial video. Choose the mos
 
 Return JSON with this exact format:
 {{
-  "narrative_template": "one of the 5 template names",
+  "narrative_template": "{narrative_template or "one of the 5 template names"}",
   "template_reason": "Brief explanation of why this template fits best",
   "core_argument": "The central thesis of the video in 1-2 sentences",
   "angle": "The unique perspective or hook that differentiates this from other coverage",
@@ -129,12 +236,20 @@ Always respond with valid JSON only, no other text."""
             elif isinstance(qa, str) and qa.strip():
                 qa_text += f"Answer {i+1}: {qa}\n\n"
 
+    structure_note = ""
+    if isinstance(idea, dict) and idea.get("narrative_structure"):
+        structure_note = (
+            "\nThe idea includes narrative_structure with ordered beats — follow that spine for "
+            "scene order, emphasis, and pacing (you may merge beats into one scene when needed).\n"
+        )
+
     user_prompt = f"""Create a scene-by-scene breakdown for a financial YouTube video.
 
 Topic: {topic_title}
 Summary: {topic_summary}
 Content Idea: {json.dumps(idea)}
 Narrative Template: {narrative_template}
+{structure_note}
 Creator's Opinion: {user_opinion}
 Q&A Refinement:
 {qa_text}

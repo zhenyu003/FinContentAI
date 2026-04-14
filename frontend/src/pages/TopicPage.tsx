@@ -1,16 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useProject } from "../App";
-import { generateIdea, refineOpinion, generateScenes } from "../api/client";
-import type { Idea } from "../types";
-
-const TEMPLATES = [
-  "Counterintuitive",
-  "Anxiety-Driven",
-  "Company Breakdown",
-  "Trend Forecast",
-  "Data Reveal",
-];
+import { refineOpinion, generateScenes } from "../api/client";
+import NarrativeTemplateSection from "../components/NarrativeTemplateSection";
 
 export default function TopicPage() {
   const navigate = useNavigate();
@@ -23,9 +15,8 @@ export default function TopicPage() {
     setAspectRatio,
     setScenes,
   } = useProject();
-  const { topic, idea, qaQuestions, qaAnswers, duration, aspectRatio } = state;
+  const { topic, idea, qaQuestions, duration, aspectRatio } = state;
 
-  const [loadingIdea, setLoadingIdea] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [opinionText, setOpinionText] = useState("");
   const [loadingRefine, setLoadingRefine] = useState(false);
@@ -37,23 +28,6 @@ export default function TopicPage() {
     navigate("/");
     return null;
   }
-
-  const handleGenerateIdea = async () => {
-    setLoadingIdea(true);
-    setError("");
-    try {
-      const data = await generateIdea(
-        topic.title,
-        topic.summary,
-        topic.sources
-      );
-      setIdea(data as Idea);
-    } catch (e: any) {
-      setError("Failed to generate idea: " + e.message);
-    } finally {
-      setLoadingIdea(false);
-    }
-  };
 
   const handleRefine = async () => {
     if (!opinionText.trim()) return;
@@ -71,8 +45,11 @@ export default function TopicPage() {
       setQA(questions, new Array(questions.length).fill(""));
       setAnswers(new Array(questions.length).fill(""));
       setStep(3);
-    } catch (e: any) {
-      setError("Failed to refine opinion: " + e.message);
+    } catch (e: unknown) {
+      setError(
+        "Failed to refine opinion: " +
+          (e instanceof Error ? e.message : String(e))
+      );
     } finally {
       setLoadingRefine(false);
     }
@@ -94,8 +71,11 @@ export default function TopicPage() {
       });
       setScenes(data.scenes || []);
       navigate("/workspace");
-    } catch (e: any) {
-      setError("Failed to generate scenes: " + e.message);
+    } catch (e: unknown) {
+      setError(
+        "Failed to generate scenes: " +
+          (e instanceof Error ? e.message : String(e))
+      );
     } finally {
       setLoadingScenes(false);
     }
@@ -104,10 +84,22 @@ export default function TopicPage() {
   return (
     <div>
       <div style={{ marginBottom: 8 }}>
-        <button className="btn btn-sm" onClick={() => navigate("/")} style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>&larr; Back to Topics</button>
+        <button
+          className="btn btn-sm"
+          onClick={() => navigate("/")}
+          style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}
+        >
+          &larr; Back to Topics
+        </button>
       </div>
       <div className="step-indicator">
-        <span className="step" style={{ cursor: "pointer" }} onClick={() => navigate("/")}>1. Topic Discovery</span>
+        <span
+          className="step"
+          style={{ cursor: "pointer" }}
+          onClick={() => navigate("/")}
+        >
+          1. Topic Discovery
+        </span>
         <span className="arrow">&rarr;</span>
         <span className="step active">2. Idea & Opinion</span>
         <span className="arrow">&rarr;</span>
@@ -116,7 +108,6 @@ export default function TopicPage() {
         <span className="step">4. Preview & Export</span>
       </div>
 
-      {/* Topic Info */}
       <div className="card mb-16">
         <h3 style={{ marginBottom: 8 }}>{topic.title}</h3>
         <p className="text-dim text-sm">{topic.summary}</p>
@@ -126,70 +117,67 @@ export default function TopicPage() {
         <p style={{ color: "var(--red)", marginBottom: 16 }}>{error}</p>
       )}
 
-      {/* Section 1: Idea Generation */}
-      <div className="section">
-        <div className="flex-between mb-16">
-          <h2 className="section-title" style={{ marginBottom: 0 }}>
-            Content Idea
-          </h2>
-          <button
-            className="btn btn-primary"
-            onClick={handleGenerateIdea}
-            disabled={loadingIdea}
-          >
-            {loadingIdea ? (
-              <span className="spinner" />
-            ) : idea ? (
-              "Regenerate"
-            ) : (
-              "Generate Idea"
-            )}
-          </button>
-        </div>
+      <NarrativeTemplateSection
+        topic={topic}
+        idea={idea}
+        setIdea={setIdea}
+        onGenerateError={setError}
+      />
 
-        {idea && (
+      {idea && (
+        <div className="section">
+          <h2 className="section-title">Content Idea</h2>
           <div className="card idea-box">
-            <div className="idea-field">
-              <label>Narrative Template</label>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <select
-                  value={idea.narrative_template}
-                  onChange={(e) =>
-                    setIdea({ ...idea, narrative_template: e.target.value })
-                  }
-                  style={{ width: "auto", minWidth: 200 }}
-                >
-                  {TEMPLATES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-                <span className="text-sm text-dim">
-                  {idea.template_reason}
-                </span>
-              </div>
-            </div>
-            <div className="idea-field">
-              <label>Core Argument</label>
-              <div className="value">{idea.core_argument}</div>
-            </div>
-            <div className="idea-field">
-              <label>Angle</label>
-              <div className="value">{idea.angle}</div>
-            </div>
-            <div className="idea-field">
-              <label>Hook (First 15 seconds)</label>
-              <div className="value" style={{ fontStyle: "italic" }}>
-                "{idea.hook}"
-              </div>
-            </div>
+            {idea.narrative_structure ? (
+              <>
+                <p className="text-sm text-dim" style={{ marginBottom: 12 }}>
+                  This narrative is locked in for script generation. Switch to{" "}
+                  <strong>+ Custom Template</strong> above to edit, then choose{" "}
+                  <strong>Use Template</strong> again.
+                </p>
+                <div className="idea-field">
+                  <label>Active template</label>
+                  <div className="value" style={{ fontWeight: 600 }}>
+                    {idea.narrative_structure.name}
+                  </div>
+                </div>
+                <div className="idea-field">
+                  <label>Tone & style</label>
+                  <div className="value">{idea.template_reason}</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="idea-field">
+                  <label>Narrative Template</label>
+                  <div className="value">
+                    <span style={{ fontWeight: 600 }}>{idea.narrative_template}</span>
+                    {idea.template_reason && (
+                      <span className="text-sm text-dim" style={{ marginLeft: 10 }}>
+                        — {idea.template_reason}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="idea-field">
+                  <label>Core Argument</label>
+                  <div className="value">{idea.core_argument}</div>
+                </div>
+                <div className="idea-field">
+                  <label>Angle</label>
+                  <div className="value">{idea.angle}</div>
+                </div>
+                <div className="idea-field">
+                  <label>Hook (First 15 seconds)</label>
+                  <div className="value" style={{ fontStyle: "italic" }}>
+                    &ldquo;{idea.hook}&rdquo;
+                  </div>
+                </div>
+              </>
+            )}
             {step === 1 && (
               <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-                <button
-                  className="btn btn-success"
-                  onClick={() => setStep(2)}
-                >
+                <button className="btn btn-success" onClick={() => setStep(2)}>
                   Accept & Add Opinion
                 </button>
                 <button
@@ -202,11 +190,10 @@ export default function TopicPage() {
               </div>
             )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Section 2: Opinion Input */}
-      {step >= 2 && (
+      {step >= 2 && idea && (
         <div className="section">
           <h2 className="section-title">Your Expert Opinion</h2>
           <div className="card">
@@ -223,7 +210,11 @@ export default function TopicPage() {
                   onClick={handleRefine}
                   disabled={loadingRefine || !opinionText.trim()}
                 >
-                  {loadingRefine ? <span className="spinner" /> : "Submit & Get AI Feedback"}
+                  {loadingRefine ? (
+                    <span className="spinner" />
+                  ) : (
+                    "Submit & Get AI Feedback"
+                  )}
                 </button>
                 <button
                   className="btn"
@@ -241,8 +232,7 @@ export default function TopicPage() {
         </div>
       )}
 
-      {/* Section 3: AI Questions + Duration/Format */}
-      {step >= 3 && (
+      {step >= 3 && idea && (
         <div className="section">
           {qaQuestions.length > 0 && (
             <div className="card mb-16">
@@ -270,7 +260,10 @@ export default function TopicPage() {
           <div className="card">
             <h3 style={{ marginBottom: 16 }}>Video Settings</h3>
             <div style={{ marginBottom: 16 }}>
-              <label className="text-sm text-dim" style={{ display: "block", marginBottom: 8 }}>
+              <label
+                className="text-sm text-dim"
+                style={{ display: "block", marginBottom: 8 }}
+              >
                 Duration
               </label>
               <div className="radio-group">
@@ -288,14 +281,17 @@ export default function TopicPage() {
                     {d === "3min"
                       ? "3 min (~6-8 scenes)"
                       : d === "5min"
-                      ? "5 min (~10-12 scenes)"
-                      : "8 min (~16-18 scenes)"}
+                        ? "5 min (~10-12 scenes)"
+                        : "8 min (~16-18 scenes)"}
                   </label>
                 ))}
               </div>
             </div>
             <div style={{ marginBottom: 16 }}>
-              <label className="text-sm text-dim" style={{ display: "block", marginBottom: 8 }}>
+              <label
+                className="text-sm text-dim"
+                style={{ display: "block", marginBottom: 8 }}
+              >
                 Video Format
               </label>
               <div className="radio-group">

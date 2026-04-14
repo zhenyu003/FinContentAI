@@ -37,8 +37,8 @@ export default function PreviewPage() {
         titles: data.titles || [],
         selectedTitle: data.titles?.[0] || "",
       });
-    } catch (e: any) {
-      setError("Title generation failed: " + e.message);
+    } catch (e: unknown) {
+      setError("Title generation failed: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoadingTitles(false);
     }
@@ -55,8 +55,8 @@ export default function PreviewPage() {
         narration_texts: scenes.map((s) => s.narration),
       });
       setMetadata({ description: data.description || "" });
-    } catch (e: any) {
-      setError("Description generation failed: " + e.message);
+    } catch (e: unknown) {
+      setError("Description generation failed: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoadingDesc(false);
     }
@@ -69,8 +69,8 @@ export default function PreviewPage() {
       const prompt = `YouTube thumbnail for financial video: "${metadata.selectedTitle || topic!.title}". Bold, eye-catching, professional financial style with strong contrast.`;
       const data = await generateThumbnail(prompt, aspectRatio);
       setMetadata({ thumbnailUrl: data.thumbnail_url });
-    } catch (e: any) {
-      setError("Thumbnail generation failed: " + e.message);
+    } catch (e: unknown) {
+      setError("Thumbnail generation failed: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoadingThumb(false);
     }
@@ -78,6 +78,14 @@ export default function PreviewPage() {
 
   return (
     <div>
+      <div style={{ marginBottom: 8 }}>
+        <button
+          className="btn btn-sm btn-secondary"
+          onClick={() => navigate("/workspace")}
+        >
+          &larr; Back to Asset Workstation
+        </button>
+      </div>
       <div className="step-indicator">
         <span className="step">1. Topic Discovery</span>
         <span className="arrow">&rarr;</span>

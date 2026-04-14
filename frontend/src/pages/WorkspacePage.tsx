@@ -1,14 +1,23 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useProject } from "../App";
 import {
   generateImage,
   generateAudio,
   generateVideo,
+  generateMotionVeo,
+  uploadChartImage,
   BACKEND,
 } from "../api/client";
+import type { SceneMode, ChartConfig } from "../types";
+import ChartConfigPanel from "../components/ChartConfigPanel";
 
 const VOICES = ["Kore", "Charon", "Fenrir", "Aoede", "Puck", "Leda"];
+const SCENE_MODES: { value: SceneMode; label: string }[] = [
+  { value: "image", label: "Image" },
+  { value: "chart", label: "Chart" },
+  { value: "motion", label: "Motion" },
+];
 
 export default function WorkspacePage() {
   const navigate = useNavigate();
@@ -22,6 +31,51 @@ export default function WorkspacePage() {
   const [loadingAllAudio, setLoadingAllAudio] = useState(false);
   const [loadingVideo, setLoadingVideo] = useState(false);
   const [error, setError] = useState("");
+  const [sceneModes, setSceneModes] = useState<Record<number, SceneMode>>({});
+  const [chartDataUrls, setChartDataUrls] = useState<Record<number, string>>({});
+  const [loadingMotion, setLoadingMotion] = useState<Record<number, boolean>>({});
+
+  const getSceneMode = (i: number): SceneMode => sceneModes[i] ?? "image";
+
+  const setSceneModeFor = (i: number, mode: SceneMode) => {
+    setSceneModes((prev) => ({ ...prev, [i]: mode }));
+    updateScene(i, { mode, type: mode });
+  };
+
+  const handleChartImage = useCallback(
+    async (index: number, dataUrl: string, config: ChartConfig) => {
+      setChartDataUrls((prev) => ({ ...prev, [index]: dataUrl }));
+      try {
+        const { image_url } = await uploadChartImage(dataUrl);
+        updateScene(index, { image_url, chartConfig: config, mode: "chart", type: "chart" });
+      } catch {
+        updateScene(index, { image_url: dataUrl, chartConfig: config, mode: "chart", type: "chart" });
+      }
+    },
+    [updateScene],
+  );
+
+  const handleGenMotion = async (index: number) => {
+    setLoadingMotion((s) => ({ ...s, [index]: true }));
+    try {
+      const scene = scenes[index];
+      const { video_url } = await generateMotionVeo({
+        description: scene.description,
+        narration: scene.narration,
+        aspect_ratio: aspectRatio,
+      });
+      updateScene(index, {
+        motion_url: video_url,
+        mode: "motion",
+        type: "motion",
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Motion (Veo) failed for scene ${index + 1}: ${msg}`);
+    } finally {
+      setLoadingMotion((s) => ({ ...s, [index]: false }));
+    }
+  };
 
   if (scenes.length === 0) {
     navigate("/topic");
@@ -32,9 +86,10 @@ export default function WorkspacePage() {
     setLoadingImg((s) => ({ ...s, [index]: true }));
     try {
       const data = await generateImage(scenes[index].description, aspectRatio);
-      updateScene(index, { image_url: data.image_url });
-    } catch (e: any) {
-      setError(`Image gen failed for scene ${index + 1}: ${e.message}`);
+      updateScene(index, { image_url: data.image_url, type: "image", mode: "image" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Image gen failed for scene ${index + 1}: ${msg}`);
     } finally {
       setLoadingImg((s) => ({ ...s, [index]: false }));
     }
@@ -45,8 +100,9 @@ export default function WorkspacePage() {
     try {
       const data = await generateAudio(scenes[index].narration, voice);
       updateScene(index, { audio_url: data.audio_url });
-    } catch (e: any) {
-      setError(`Audio gen failed for scene ${index + 1}: ${e.message}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Audio gen failed for scene ${index + 1}: ${msg}`);
     } finally {
       setLoadingAudio((s) => ({ ...s, [index]: false }));
     }
@@ -55,6 +111,7 @@ export default function WorkspacePage() {
   const handleGenAllImages = async () => {
     setLoadingAllImg(true);
     for (let i = 0; i < scenes.length; i++) {
+      if (getSceneMode(i) === "motion") continue;
       if (!scenes[i].image_url) {
         await handleGenImage(i);
       }
@@ -72,22 +129,37 @@ export default function WorkspacePage() {
     setLoadingAllAudio(false);
   };
 
-  const allReady = scenes.every((s) => s.image_url && s.audio_url);
+  const allReady = scenes.every((s, i) => {
+    if (!s.audio_url) return false;
+    if (getSceneMode(i) === "motion") return !!s.motion_url;
+    return !!s.image_url;
+  });
 
   const handleGenVideo = async () => {
     setLoadingVideo(true);
     setError("");
     try {
-      const sceneInputs = scenes.map((s) => ({
-        image_path: s.image_url!.replace(/^\//, ""),
-        audio_path: s.audio_url!.replace(/^\//, ""),
-        narration: s.narration,
-      }));
+      const sceneInputs = scenes.map((s, i) => {
+        const audio_path = s.audio_url!.replace(/^\//, "");
+        if (getSceneMode(i) === "motion") {
+          return {
+            video_clip_path: s.motion_url!.replace(/^\//, ""),
+            audio_path,
+            narration: s.narration,
+          };
+        }
+        return {
+          image_path: s.image_url!.replace(/^\//, ""),
+          audio_path,
+          narration: s.narration,
+        };
+      });
       const data = await generateVideo(sceneInputs, aspectRatio);
       setVideoUrl(data.video_url);
       navigate("/preview");
-    } catch (e: any) {
-      setError("Video generation failed: " + e.message);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError("Video generation failed: " + msg);
     } finally {
       setLoadingVideo(false);
     }
@@ -182,27 +254,103 @@ export default function WorkspacePage() {
                     }
                   />
                 </td>
-                <td className="media-cell">
-                  {scene.image_url && (
-                    <img
-                      src={BACKEND + scene.image_url}
-                      alt={`Scene ${scene.scene_number}`}
-                    />
+                <td className="media-cell" style={{ width: getSceneMode(i) === "chart" ? 520 : 180 }}>
+                  {/* 3-mode segmented control */}
+                  <div className="scene-mode-toggle">
+                    {SCENE_MODES.map((m) => (
+                      <button
+                        key={m.value}
+                        onClick={() => setSceneModeFor(i, m.value)}
+                        className={`scene-mode-btn ${getSceneMode(i) === m.value ? "active" : ""}`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* === Image mode === */}
+                  {getSceneMode(i) === "image" && (
+                    <>
+                      {scene.image_url && (
+                        <img
+                          src={scene.image_url.startsWith("data:") ? scene.image_url : BACKEND + scene.image_url}
+                          alt={`Scene ${scene.scene_number}`}
+                        />
+                      )}
+                      <br />
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => handleGenImage(i)}
+                        disabled={loadingImg[i]}
+                      >
+                        {loadingImg[i] ? (
+                          <span className="spinner" />
+                        ) : scene.image_url ? (
+                          "Regen"
+                        ) : (
+                          "Generate"
+                        )}
+                      </button>
+                    </>
                   )}
-                  <br />
-                  <button
-                    className="btn btn-sm btn-secondary"
-                    onClick={() => handleGenImage(i)}
-                    disabled={loadingImg[i]}
-                  >
-                    {loadingImg[i] ? (
-                      <span className="spinner" />
-                    ) : scene.image_url ? (
-                      "Regen"
-                    ) : (
-                      "Generate"
-                    )}
-                  </button>
+
+                  {/* === Chart mode === */}
+                  {getSceneMode(i) === "chart" && (
+                    <>
+                      {chartDataUrls[i] && (
+                        <>
+                          <img src={chartDataUrls[i]} alt={`Scene ${scene.scene_number} chart`} />
+                          <span style={{ display: "block", fontSize: 10, color: "var(--text-dim)", marginBottom: 4 }}>
+                            Generated Chart (Data Visualization)
+                          </span>
+                        </>
+                      )}
+                      <ChartConfigPanel
+                        description={scene.description}
+                        onChartImage={(dataUrl, config) => handleChartImage(i, dataUrl, config)}
+                      />
+                    </>
+                  )}
+
+                  {/* === Motion mode === */}
+                  {getSceneMode(i) === "motion" && (
+                    <>
+                      {loadingMotion[i] && (
+                        <p className="text-sm text-dim" style={{ margin: "8px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                          <span className="spinner" />
+                          Generating AI video...
+                        </p>
+                      )}
+                      {!loadingMotion[i] && scene.motion_url && (
+                        <video
+                          controls
+                          autoPlay
+                          loop
+                          playsInline
+                          style={{ width: "100%", maxHeight: 220, borderRadius: 6 }}
+                          src={BACKEND + scene.motion_url}
+                        />
+                      )}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => handleGenMotion(i)}
+                          disabled={loadingMotion[i] || !!scene.motion_url}
+                        >
+                          Generate Motion
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => handleGenMotion(i)}
+                          disabled={loadingMotion[i] || !scene.motion_url}
+                        >
+                          Regenerate Motion
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </td>
                 <td className="media-cell">
                   {scene.audio_url && (
@@ -244,7 +392,7 @@ export default function WorkspacePage() {
         </button>
         {!allReady && (
           <p className="text-sm text-dim mt-16">
-            Generate all images and audio before creating the video.
+            Generate all scene visuals (image, chart, or motion) and audio before creating the video.
           </p>
         )}
       </div>

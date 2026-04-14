@@ -69,6 +69,9 @@ class SocialIdeaRequest(BaseModel):
     topic_title: str
     topic_summary: str
     sources: list[str] = []
+    narrative_template: Optional[str] = None
+    """Custom single-post template from POST /template/social-generate (optional)."""
+    social_template: Optional[dict] = None
 
 
 class SocialGenerateRequest(BaseModel):
@@ -116,7 +119,11 @@ async def create_social_idea(
             sources=body.sources,
             profile_context=profile_context,
             knowledge_context=knowledge_context,
+            narrative_template=body.narrative_template,
+            social_template=body.social_template,
         )
+        if body.social_template:
+            idea["social_post_template"] = body.social_template
         return idea
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
