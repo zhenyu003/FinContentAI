@@ -1,10 +1,26 @@
-fastapi
-uvicorn
-python-dotenv
-httpx
-google-genai
-python-multipart
-pydantic
-supabase
-python-jose[cryptography]
-google-api-python-client
+# Web framework
+fastapi>=0.115.0
+uvicorn>=0.34.0
+python-multipart>=0.0.20
+pydantic>=2.10.0
+
+# Environment
+python-dotenv>=1.1.0
+
+# HTTP client
+httpx>=0.28.0
+
+# Google AI (Gemini, Imagen, Veo, TTS)
+google-genai>=1.14.0
+
+# Database & Auth
+supabase>=2.13.0
+python-jose[cryptography]>=3.4.0
+
+# Knowledge base (PDF & web parsing)
+beautifulsoup4>=4.13.0
+pdfplumber>=0.11.0
+
+# Subtitle alignment (uses Whisper base model for forced alignment)
+# Note: This will also install torch, whisper, etc. (~2GB download)
+stable-ts>=2.16.0

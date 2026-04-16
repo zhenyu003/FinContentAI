@@ -2,20 +2,9 @@ export interface Topic {
   title: string;
   summary: string;
   sources: string[];
-  youtube_views?: number;
-  twitter_views?: number;
-  ai_summary?: string;
-}
-
-export interface Trend {
-  id: string;
-  title: string;
-  summary: string;
-  engagement: number;
   category?: string;
   youtube_views?: number;
-  twitter_likes?: number;
-  twitter_retweets?: number;
+  twitter_views?: number;
   ai_summary?: string;
 }
 
@@ -73,9 +62,23 @@ export interface ChartSeries {
 }
 
 export interface ChartConfig {
-  chartType: "line" | "bar";
+  chartType: "line" | "bar" | "pie";
+  title?: string;
+  xAxisLabel?: string;
+  yAxisLabel?: string;
+  source?: string;
   labels: string[];
   series: ChartSeries[];
+}
+
+/** A single shot within a Motion Studio scene. */
+export interface ShotData {
+  shot_index: number;
+  visual_prompt: string;
+  start: number;
+  end: number;
+  freeze_tail: boolean;
+  motion_url?: string;
 }
 
 export interface Scene {
@@ -84,10 +87,12 @@ export interface Scene {
   description: string;
   narration: string;
   image_url?: string;
-  /** Veo-generated MP4 for Motion mode. */
+  /** Final stitched MP4 from Motion Studio. */
   motion_url?: string;
   audio_url?: string;
   audio_duration?: number;
+  /** Persisted shots from Motion Studio. */
+  shots?: ShotData[];
   mode?: SceneMode;
   /** Same as mode for script/workstation; optional for older saved projects. */
   type?: SceneVisualType;

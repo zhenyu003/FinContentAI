@@ -8,23 +8,31 @@ import ChartRenderer from "./ChartRenderer";
 interface Props {
   description: string;
   onChartImage: (dataUrl: string, config: ChartConfig) => void;
+  /** Restore a previously saved chart config (e.g. after navigating back). */
+  savedConfig?: ChartConfig;
 }
 
-export default function ChartConfigPanel({ description, onChartImage }: Props) {
-  const [config, setConfig] = useState<ChartConfig>(defaultChartConfig);
-  const [jsonText, setJsonText] = useState(JSON.stringify(defaultChartConfig, null, 2));
+export default function ChartConfigPanel({ description, onChartImage, savedConfig }: Props) {
+  const initial = savedConfig ?? defaultChartConfig;
+  const [config, setConfig] = useState<ChartConfig>(initial);
+  const [jsonText, setJsonText] = useState(JSON.stringify(initial, null, 2));
   const [jsonError, setJsonError] = useState("");
   const [rendering, setRendering] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
+  // Auto-show preview if restoring a previously generated chart
+  const [showPreview, setShowPreview] = useState(!!savedConfig);
   const chartRef = useRef<HTMLDivElement>(null);
+
+  const updateConfig = (next: ChartConfig) => {
+    setConfig(next);
+    setJsonText(JSON.stringify(next, null, 2));
+    setJsonError("");
+    setShowPreview(false);
+  };
 
   const applyTemplate = (key: string) => {
     const tpl = chartTemplates[key];
     if (!tpl) return;
-    setConfig(tpl.config);
-    setJsonText(JSON.stringify(tpl.config, null, 2));
-    setJsonError("");
-    setShowPreview(false);
+    updateConfig(tpl.config);
   };
 
   const handleJsonChange = (text: string) => {
@@ -41,10 +49,7 @@ export default function ChartConfigPanel({ description, onChartImage }: Props) {
 
   const handleGenerateFromDescription = () => {
     const generated = generateChartFromDescription(description);
-    setConfig(generated);
-    setJsonText(JSON.stringify(generated, null, 2));
-    setJsonError("");
-    setShowPreview(false);
+    updateConfig(generated);
   };
 
   const handleRenderChart = useCallback(async () => {
@@ -94,15 +99,13 @@ export default function ChartConfigPanel({ description, onChartImage }: Props) {
         <select
           value={config.chartType}
           onChange={(e) => {
-            const next = { ...config, chartType: e.target.value as "line" | "bar" };
-            setConfig(next);
-            setJsonText(JSON.stringify(next, null, 2));
-            setShowPreview(false);
+            updateConfig({ ...config, chartType: e.target.value as "line" | "bar" | "pie" });
           }}
           style={{ width: 110, fontSize: 12, padding: "5px 8px" }}
         >
           <option value="line">Line Chart</option>
           <option value="bar">Bar Chart</option>
+          <option value="pie">Pie Chart</option>
         </select>
 
         <select

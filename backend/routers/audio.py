@@ -14,11 +14,11 @@ class GenerateAudioRequest(BaseModel):
 @router.post("/generate")
 async def create_audio(request: GenerateAudioRequest):
     try:
-        file_path = generate_speech(
+        result = generate_speech(
             text=request.text,
             voice=request.voice,
         )
-        url = "/" + file_path.replace("\\", "/")
-        return {"audio_url": url}
+        url = "/" + result["file_path"].replace("\\", "/")
+        return {"audio_url": url, "duration_sec": result["duration_sec"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

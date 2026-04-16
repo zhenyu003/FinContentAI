@@ -1,18 +1,8 @@
 import os
 import uuid
-from google import genai
 from google.genai import types
 
-
-def _get_client():
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is not set")
-    return genai.Client(api_key=api_key)
-
-
-def _ensure_dir(path: str):
-    os.makedirs(path, exist_ok=True)
+from services.utils import get_gemini_client, ensure_dir
 
 
 def _map_aspect_ratio(aspect_ratio: str) -> str:
@@ -26,8 +16,8 @@ def _map_aspect_ratio(aspect_ratio: str) -> str:
 
 def _generate_and_save(prompt: str, aspect_ratio: str, save_dir: str) -> str:
     """Generate an image with Imagen 3 and save locally."""
-    client = _get_client()
-    _ensure_dir(save_dir)
+    client = get_gemini_client()
+    ensure_dir(save_dir)
 
     filename = f"{uuid.uuid4()}.png"
     save_path = os.path.join(save_dir, filename)

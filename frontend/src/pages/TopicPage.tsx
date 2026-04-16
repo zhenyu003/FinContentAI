@@ -1,8 +1,13 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Navigate } from "react-router-dom";
 import { useProject } from "../App";
 import { refineOpinion, generateScenes } from "../api/client";
 import NarrativeTemplateSection from "../components/NarrativeTemplateSection";
+
+interface QAItem {
+  question: string;
+  suggestions: string[];
+}
 
 export default function TopicPage() {
   const navigate = useNavigate();
@@ -20,13 +25,17 @@ export default function TopicPage() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [opinionText, setOpinionText] = useState("");
   const [loadingRefine, setLoadingRefine] = useState(false);
+  const [qaItems, setQaItems] = useState<QAItem[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
+  const [customOpen, setCustomOpen] = useState<boolean[]>([]);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [loadingScenes, setLoadingScenes] = useState(false);
   const [error, setError] = useState("");
+  const [ideaKnowledgeUsed, setIdeaKnowledgeUsed] = useState(false);
+  const [scenesKnowledgeUsed, setScenesKnowledgeUsed] = useState(false);
 
   if (!topic) {
-    navigate("/");
-    return null;
+    return <Navigate to="/" replace />;
   }
 
   const handleRefine = async () => {
@@ -41,9 +50,17 @@ export default function TopicPage() {
         idea!,
         opinionText
       );
-      const questions = data.questions || [];
-      setQA(questions, new Array(questions.length).fill(""));
-      setAnswers(new Array(questions.length).fill(""));
+      const items: QAItem[] = (data.questions || []).map(
+        (q: { question: string; suggestions?: string[] }) => ({
+          question: q.question,
+          suggestions: q.suggestions || [],
+        })
+      );
+      setQaItems(items);
+      const questionStrings = items.map((q) => q.question);
+      setQA(questionStrings, new Array(items.length).fill(""));
+      setAnswers(new Array(items.length).fill(""));
+      setCustomOpen(new Array(items.length).fill(false));
       setStep(3);
     } catch (e: unknown) {
       setError(
@@ -55,9 +72,34 @@ export default function TopicPage() {
     }
   };
 
+  const selectSuggestion = (qIndex: number, text: string) => {
+    const newAnswers = [...answers];
+    newAnswers[qIndex] = text;
+    setAnswers(newAnswers);
+    const newCustom = [...customOpen];
+    newCustom[qIndex] = false;
+    setCustomOpen(newCustom);
+    setEditingIndex(null);
+  };
+
+  const startEditing = (qIndex: number) => {
+    setEditingIndex(qIndex);
+    const newCustom = [...customOpen];
+    newCustom[qIndex] = false;
+    setCustomOpen(newCustom);
+  };
+
+  const openCustom = (qIndex: number) => {
+    const newCustom = [...customOpen];
+    newCustom[qIndex] = true;
+    setCustomOpen(newCustom);
+    setEditingIndex(null);
+  };
+
   const handleGenerateScript = async () => {
     setLoadingScenes(true);
     setError("");
+    setScenesKnowledgeUsed(false);
     setQA(qaQuestions, answers);
     try {
       const data = await generateScenes({
@@ -69,8 +111,9 @@ export default function TopicPage() {
         duration,
         narrative_template: idea!.narrative_template,
       });
+      if (data.knowledge_used) setScenesKnowledgeUsed(true);
       setScenes(data.scenes || []);
-      navigate("/workspace");
+      navigate("/workspace", { state: { knowledgeUsed: !!data.knowledge_used } });
     } catch (e: unknown) {
       setError(
         "Failed to generate scenes: " +
@@ -122,11 +165,19 @@ export default function TopicPage() {
         idea={idea}
         setIdea={setIdea}
         onGenerateError={setError}
+        onKnowledgeUsed={setIdeaKnowledgeUsed}
       />
 
       {idea && (
         <div className="section">
-          <h2 className="section-title">Content Idea</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+            <h2 className="section-title" style={{ marginBottom: 0 }}>Content Idea</h2>
+            {ideaKnowledgeUsed && (
+              <span style={{ fontSize: 12, color: "var(--accent)" }}>
+                ✦ Enhanced with your Knowledge Base
+              </span>
+            )}
+          </div>
           <div className="card idea-box">
             {idea.narrative_structure ? (
               <>
@@ -152,11 +203,6 @@ export default function TopicPage() {
                   <label>Narrative Template</label>
                   <div className="value">
                     <span style={{ fontWeight: 600 }}>{idea.narrative_template}</span>
-                    {idea.template_reason && (
-                      <span className="text-sm text-dim" style={{ marginLeft: 10 }}>
-                        — {idea.template_reason}
-                      </span>
-                    )}
                   </div>
                 </div>
                 <div className="idea-field">
@@ -178,14 +224,14 @@ export default function TopicPage() {
             {step === 1 && (
               <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
                 <button className="btn btn-success" onClick={() => setStep(2)}>
-                  Accept & Add Opinion
+                  Add My Opinion
                 </button>
                 <button
                   className="btn"
                   style={{ background: "var(--surface2)", color: "var(--text)" }}
                   onClick={() => setStep(3)}
                 >
-                  Skip to Script Settings
+                  Go to Script Settings
                 </button>
               </div>
             )}
@@ -193,7 +239,7 @@ export default function TopicPage() {
         </div>
       )}
 
-      {step >= 2 && idea && (
+      {step === 2 && idea && (
         <div className="section">
           <h2 className="section-title">Your Expert Opinion</h2>
           <div className="card">
@@ -224,7 +270,7 @@ export default function TopicPage() {
                     setStep(3);
                   }}
                 >
-                  Skip to Script Settings
+                  Go to Script Settings
                 </button>
               </div>
             )}
@@ -234,26 +280,97 @@ export default function TopicPage() {
 
       {step >= 3 && idea && (
         <div className="section">
-          {qaQuestions.length > 0 && (
+          {qaItems.length > 0 && (
             <div className="card mb-16">
               <h3 style={{ marginBottom: 16 }}>AI Follow-up Questions</h3>
-              {qaQuestions.map((q, i) => (
-                <div key={i} style={{ marginBottom: 16 }}>
-                  <p className="text-sm" style={{ marginBottom: 6, fontWeight: 500 }}>
-                    {q}
-                  </p>
-                  <textarea
-                    rows={2}
-                    placeholder="Your answer..."
-                    value={answers[i] || ""}
-                    onChange={(e) => {
-                      const newA = [...answers];
-                      newA[i] = e.target.value;
-                      setAnswers(newA);
-                    }}
-                  />
-                </div>
-              ))}
+              {qaItems.map((item, i) => {
+                const isCustom = customOpen[i];
+                const isEditing = editingIndex === i;
+                const currentAnswer = answers[i] || "";
+                const matchedSuggestion = !isCustom && !isEditing
+                  ? item.suggestions.findIndex((s) => s === currentAnswer)
+                  : -1;
+
+                return (
+                  <div key={i} className="qa-item">
+                    <p className="qa-question">{item.question}</p>
+
+                    {isEditing ? (
+                      <div>
+                        <textarea
+                          rows={2}
+                          className="qa-custom-input"
+                          autoFocus
+                          value={currentAnswer}
+                          onChange={(e) => {
+                            const newA = [...answers];
+                            newA[i] = e.target.value;
+                            setAnswers(newA);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ marginTop: 6 }}
+                          onClick={() => setEditingIndex(null)}
+                        >
+                          Done
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="qa-suggestions">
+                        {item.suggestions.map((s, si) => (
+                          <div key={si} className="qa-chip-row">
+                            <button
+                              type="button"
+                              className={`qa-chip ${matchedSuggestion === si ? "active" : ""}`}
+                              onClick={() => selectSuggestion(i, s)}
+                            >
+                              {matchedSuggestion === si ? currentAnswer : s}
+                            </button>
+                            {matchedSuggestion === si && (
+                              <button
+                                type="button"
+                                className="qa-edit-btn"
+                                title="Edit this answer"
+                                onClick={() => startEditing(i)}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        <div className="qa-chip-row">
+                          <button
+                            type="button"
+                            className={`qa-chip qa-chip--custom ${isCustom ? "active" : ""}`}
+                            onClick={() => openCustom(i)}
+                          >
+                            Custom...
+                          </button>
+                        </div>
+                        {isCustom && (
+                          <textarea
+                            rows={2}
+                            className="qa-custom-input"
+                            autoFocus
+                            placeholder="Type your own take..."
+                            value={currentAnswer}
+                            onChange={(e) => {
+                              const newA = [...answers];
+                              newA[i] = e.target.value;
+                              setAnswers(newA);
+                            }}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -267,7 +384,7 @@ export default function TopicPage() {
                 Duration
               </label>
               <div className="radio-group">
-                {["3min", "5min", "8min"].map((d) => (
+                {["90s", "3min", "5min"].map((d) => (
                   <label
                     key={d}
                     className={`radio-option ${duration === d ? "selected" : ""}`}
@@ -278,11 +395,11 @@ export default function TopicPage() {
                       checked={duration === d}
                       onChange={() => setDuration(d)}
                     />
-                    {d === "3min"
-                      ? "3 min (~6-8 scenes)"
-                      : d === "5min"
-                        ? "5 min (~10-12 scenes)"
-                        : "8 min (~16-18 scenes)"}
+                    {d === "90s"
+                      ? "90s (~3-4 scenes)"
+                      : d === "3min"
+                        ? "3 min (~6-8 scenes)"
+                        : "5 min (~10-12 scenes)"}
                   </label>
                 ))}
               </div>

@@ -1,16 +1,6 @@
 """LLM-generated structured templates for social posts (single-post narrative)."""
 
-import json
-import re
-
-from services.social_post import _call_llm
-
-
-def _parse_json(text: str) -> dict:
-    cleaned = text.strip()
-    cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
-    cleaned = re.sub(r"\n?```\s*$", "", cleaned)
-    return json.loads(cleaned)
+from services.utils import call_llm, parse_json_response
 
 
 def _normalize_template(data: dict, user_input: str) -> dict:
@@ -91,7 +81,7 @@ User input:
 {text}"""
 
     try:
-        raw = _parse_json(_call_llm(system_prompt, user_prompt))
+        raw = parse_json_response(call_llm(system_prompt, user_prompt))
         if not isinstance(raw, dict):
             raise ValueError("Expected JSON object")
         return _normalize_template(raw, text)

@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useMemo } from "react";
+import { useNavigate, Navigate } from "react-router-dom";
 import { useProject } from "../App";
 import {
   generateSocialIdea,
   generateSocialContent,
   generateSocialPostTemplate,
+  recommendTemplate,
 } from "../api/client";
 import type { Idea, SocialPostTemplate } from "../types";
 import SocialCustomTemplatePanel from "../components/SocialCustomTemplatePanel";
@@ -28,10 +29,39 @@ export default function SocialIdeaPage() {
 
   const [templateMode, setTemplateMode] = useState<SocialTemplateMode>("preset");
   const [selectedTemplate, setSelectedTemplate] = useState(TEMPLATES[0].value);
+  const [recommendedTemplate, setRecommendedTemplate] = useState<string | null>(null);
+  const [recommendReason, setRecommendReason] = useState("");
+  const [loadingRecommend, setLoadingRecommend] = useState(false);
   const [socialInput, setSocialInput] = useState("");
   const [socialPostTemplate, setSocialPostTemplate] = useState<SocialPostTemplate | null>(null);
   const [loadingSocialTemplate, setLoadingSocialTemplate] = useState(false);
   const [templateApiError, setTemplateApiError] = useState("");
+
+  useEffect(() => {
+    if (!topic) return;
+    let cancelled = false;
+    setLoadingRecommend(true);
+    recommendTemplate(
+      topic.title,
+      topic.summary,
+      TEMPLATES.map((t) => t.value)
+    ).then((data) => {
+      if (cancelled) return;
+      setRecommendedTemplate(data.template);
+      setRecommendReason(data.reason);
+      setSelectedTemplate(data.template);
+    }).catch(() => {}).finally(() => {
+      if (!cancelled) setLoadingRecommend(false);
+    });
+    return () => { cancelled = true; };
+  }, [topic]);
+
+  const sortedTemplates = useMemo(() => {
+    if (!recommendedTemplate) return TEMPLATES;
+    return [...TEMPLATES].sort((a, b) =>
+      a.value === recommendedTemplate ? -1 : b.value === recommendedTemplate ? 1 : 0
+    );
+  }, [recommendedTemplate]);
 
   const [loadingIdea, setLoadingIdea] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -45,8 +75,7 @@ export default function SocialIdeaPage() {
   const [loadingContent, setLoadingContent] = useState(false);
 
   if (!topic) {
-    navigate("/");
-    return null;
+    return <Navigate to="/" replace />;
   }
 
   const handleSelectPreset = (value: string) => {
@@ -185,8 +214,13 @@ export default function SocialIdeaPage() {
             Choose a preset style or <strong>+ Custom Template</strong> to describe your own
             single-post arc, then generate the content idea.
           </p>
+          {loadingRecommend && (
+            <p className="text-sm text-dim" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+              <span className="spinner" /> Analyzing best template for this topic...
+            </p>
+          )}
           <div className="template-grid">
-            {TEMPLATES.map((t) => (
+            {sortedTemplates.map((t) => (
               <label
                 key={t.value}
                 className={`template-option ${templateMode === "preset" && selectedTemplate === t.value ? "selected" : ""}`}
@@ -198,10 +232,18 @@ export default function SocialIdeaPage() {
                   onChange={() => handleSelectPreset(t.value)}
                 />
                 <div>
-                  <div className="template-option-name">{t.value}</div>
+                  <div className="template-option-name">
+                    {t.value}
+                    {recommendedTemplate === t.value && (
+                      <span className="badge-recommended">Recommended</span>
+                    )}
+                  </div>
                   <div className="text-dim" style={{ fontSize: 12, lineHeight: 1.4 }}>
                     {t.desc}
                   </div>
+                  {recommendedTemplate === t.value && recommendReason && (
+                    <div className="recommend-reason">{recommendReason}</div>
+                  )}
                 </div>
               </label>
             ))}
@@ -271,11 +313,6 @@ export default function SocialIdeaPage() {
               <label>Narrative Template</label>
               <div className="value">
                 <span style={{ fontWeight: 600 }}>{idea.narrative_template}</span>
-                {idea.template_reason && (
-                  <span className="text-sm text-dim" style={{ marginLeft: 10 }}>
-                    — {idea.template_reason}
-                  </span>
-                )}
               </div>
             </div>
             {idea.social_post_template && (
@@ -434,7 +471,11 @@ export default function SocialIdeaPage() {
                       checked={textLength === len}
                       onChange={() => setTextLength(len)}
                     />
-                    {len}
+                    {len === "Short"
+                      ? "Short (~50-80 words)"
+                      : len === "Medium"
+                        ? "Medium (~120-180 words)"
+                        : "Long (~250-400 words)"}
                   </label>
                 ))}
               </div>

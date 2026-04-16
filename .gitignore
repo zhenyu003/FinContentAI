@@ -16,6 +16,7 @@ backend/assets/images/
 backend/assets/audio/
 backend/assets/video/
 backend/assets/thumbnails/
+backend/assets/uploads/
 
 # OS
 .DS_Store
@@ -24,3 +25,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Claude Code
+.claude/

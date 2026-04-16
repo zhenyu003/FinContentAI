@@ -2,23 +2,12 @@ import os
 import uuid
 import wave
 import struct
-from google import genai
 from google.genai import types
 
-
-def _get_client():
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is not set")
-    return genai.Client(api_key=api_key)
+from services.utils import get_gemini_client, ensure_dir
 
 
-def _ensure_dir(path: str):
-    """Ensure the directory exists."""
-    os.makedirs(path, exist_ok=True)
-
-
-def generate_speech(text: str, voice: str = "Kore") -> str:
+def generate_speech(text: str, voice: str = "Kore") -> dict:
     """Generate speech audio using Gemini TTS.
 
     Args:
@@ -26,12 +15,12 @@ def generate_speech(text: str, voice: str = "Kore") -> str:
         voice: The voice name to use (default: "Kore").
 
     Returns:
-        The local file path of the saved WAV audio file.
+        dict with "file_path" (str) and "duration_sec" (float).
     """
-    client = _get_client()
+    client = get_gemini_client()
 
     save_dir = os.path.join("assets", "audio")
-    _ensure_dir(save_dir)
+    ensure_dir(save_dir)
 
     filename = f"{uuid.uuid4()}.wav"
     save_path = os.path.join(save_dir, filename)
@@ -66,7 +55,11 @@ def generate_speech(text: str, voice: str = "Kore") -> str:
             wf.setframerate(sample_rate)
             wf.writeframes(audio_data)
 
-        return save_path
+        # Calculate duration from PCM data length
+        num_frames = len(audio_data) // (sample_width * num_channels)
+        duration_sec = round(num_frames / sample_rate, 2)
+
+        return {"file_path": save_path, "duration_sec": duration_sec}
 
     except Exception as e:
         raise ValueError(f"Failed to generate speech: {e}")

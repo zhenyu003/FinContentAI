@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Navigate } from "react-router-dom";
 import { useProject } from "../App";
 import {
   generateTitles,
@@ -8,19 +8,34 @@ import {
   BACKEND,
 } from "../api/client";
 
+/** Cross-origin safe download via fetch + blob. */
+async function downloadFile(url: string, filename: string) {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(blobUrl);
+}
+
 export default function PreviewPage() {
   const navigate = useNavigate();
   const { state, setMetadata } = useProject();
   const { topic, idea, scenes, videoUrl, aspectRatio, metadata } = state;
+  const isVertical = aspectRatio === "9:16";
 
   const [loadingTitles, setLoadingTitles] = useState(false);
   const [loadingDesc, setLoadingDesc] = useState(false);
   const [loadingThumb, setLoadingThumb] = useState(false);
   const [error, setError] = useState("");
+  const [videoError, setVideoError] = useState(false);
 
   if (!videoUrl) {
-    navigate("/workspace");
-    return null;
+    return <Navigate to="/workspace" replace />;
   }
 
   const handleGenTitles = async () => {
@@ -104,20 +119,32 @@ export default function PreviewPage() {
       <div className="section">
         <h2 className="section-title">Video Preview</h2>
         <div className="card" style={{ textAlign: "center" }}>
-          <video
-            className="video-preview"
-            controls
-            src={BACKEND + videoUrl}
-          />
-          <div className="mt-16">
-            <a
-              href={BACKEND + videoUrl}
-              download
-              className="btn btn-primary"
-            >
-              Download Video
-            </a>
-          </div>
+          {videoError ? (
+            <div style={{ padding: "40px 20px", color: "var(--text-dim)" }}>
+              <p style={{ fontSize: 16, marginBottom: 12 }}>Video file is no longer available.</p>
+              <button className="btn btn-primary" onClick={() => navigate("/workspace")}>
+                &larr; Back to Workstation to re-generate
+              </button>
+            </div>
+          ) : (
+            <>
+              <video
+                className="video-preview"
+                style={isVertical ? { maxWidth: 320, width: "auto", maxHeight: "70vh" } : undefined}
+                controls
+                src={BACKEND + videoUrl}
+                onError={() => setVideoError(true)}
+              />
+              <div className="mt-16">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => downloadFile(BACKEND + videoUrl, "video.mp4")}
+                >
+                  Download Video
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -231,13 +258,12 @@ export default function PreviewPage() {
                   alt="Thumbnail"
                 />
                 <div className="mt-16">
-                  <a
-                    href={BACKEND + metadata.thumbnailUrl}
-                    download
+                  <button
                     className="btn btn-sm btn-secondary"
+                    onClick={() => downloadFile(BACKEND + metadata.thumbnailUrl!, "thumbnail.png")}
                   >
                     Download Thumbnail
-                  </a>
+                  </button>
                 </div>
               </div>
             )}

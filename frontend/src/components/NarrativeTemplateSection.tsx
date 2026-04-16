@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { generateIdea } from "../api/client";
+import { useState, useEffect, useMemo } from "react";
+import { generateIdea, recommendTemplate } from "../api/client";
 import type { Idea, Topic } from "../types";
 import NarrativeBuilder from "./NarrativeBuilder";
 
@@ -18,6 +18,7 @@ type Props = {
   idea: Idea | null;
   setIdea: (idea: Idea) => void;
   onGenerateError: (message: string) => void;
+  onKnowledgeUsed?: (used: boolean) => void;
 };
 
 export default function NarrativeTemplateSection({
@@ -25,10 +26,40 @@ export default function NarrativeTemplateSection({
   idea,
   setIdea,
   onGenerateError,
+  onKnowledgeUsed,
 }: Props) {
   const [templateMode, setTemplateMode] = useState<TemplateMode>("preset");
   const [selectedTemplate, setSelectedTemplate] = useState(TEMPLATES[0].value);
+  const [recommendedTemplate, setRecommendedTemplate] = useState<string | null>(null);
+  const [recommendReason, setRecommendReason] = useState("");
+  const [loadingRecommend, setLoadingRecommend] = useState(false);
   const [loadingIdea, setLoadingIdea] = useState(false);
+
+  useEffect(() => {
+    if (!topic) return;
+    let cancelled = false;
+    setLoadingRecommend(true);
+    recommendTemplate(
+      topic.title,
+      topic.summary,
+      TEMPLATES.map((t) => t.value)
+    ).then((data) => {
+      if (cancelled) return;
+      setRecommendedTemplate(data.template);
+      setRecommendReason(data.reason);
+      setSelectedTemplate(data.template);
+    }).catch(() => {}).finally(() => {
+      if (!cancelled) setLoadingRecommend(false);
+    });
+    return () => { cancelled = true; };
+  }, [topic]);
+
+  const sortedTemplates = useMemo(() => {
+    if (!recommendedTemplate) return TEMPLATES;
+    return [...TEMPLATES].sort((a, b) =>
+      a.value === recommendedTemplate ? -1 : b.value === recommendedTemplate ? 1 : 0
+    );
+  }, [recommendedTemplate]);
 
   const handleSelectPreset = (value: string) => {
     setTemplateMode("preset");
@@ -39,8 +70,11 @@ export default function NarrativeTemplateSection({
     setTemplateMode("custom");
   };
 
+  const [knowledgeUsed, setKnowledgeUsed] = useState(false);
+
   const handleGenerateIdea = async () => {
     setLoadingIdea(true);
+    setKnowledgeUsed(false);
     onGenerateError("");
     try {
       const data = await generateIdea(
@@ -49,6 +83,9 @@ export default function NarrativeTemplateSection({
         topic.sources,
         selectedTemplate
       );
+      const used = !!data.knowledge_used;
+      setKnowledgeUsed(used);
+      onKnowledgeUsed?.(used);
       setIdea(data as Idea);
     } catch (e: unknown) {
       onGenerateError(
@@ -69,8 +106,13 @@ export default function NarrativeTemplateSection({
           <strong>Custom Template</strong> to describe your own story structure.
         </p>
 
+        {loadingRecommend && (
+          <p className="text-sm text-dim" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="spinner" /> Analyzing best template for this topic...
+          </p>
+        )}
         <div className="template-grid">
-          {TEMPLATES.map((t) => (
+          {sortedTemplates.map((t) => (
             <label
               key={t.value}
               className={`template-option ${templateMode === "preset" && selectedTemplate === t.value ? "selected" : ""}`}
@@ -82,10 +124,18 @@ export default function NarrativeTemplateSection({
                 onChange={() => handleSelectPreset(t.value)}
               />
               <div>
-                <div className="template-option-name">{t.value}</div>
+                <div className="template-option-name">
+                  {t.value}
+                  {recommendedTemplate === t.value && (
+                    <span className="badge-recommended">Recommended</span>
+                  )}
+                </div>
                 <div className="text-dim" style={{ fontSize: 12, lineHeight: 1.4 }}>
                   {t.desc}
                 </div>
+                {recommendedTemplate === t.value && recommendReason && (
+                  <div className="recommend-reason">{recommendReason}</div>
+                )}
               </div>
             </label>
           ))}

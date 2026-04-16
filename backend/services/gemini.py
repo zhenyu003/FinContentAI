@@ -1,26 +1,8 @@
-import os
-import json
-import re
-from google import genai
 from google.genai import types
 
-
-def _get_client():
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is not set")
-    return genai.Client(api_key=api_key)
-
+from services.utils import get_gemini_client, parse_json_response
 
 MODEL = "gemini-2.5-flash"
-
-
-def _parse_json_response(text: str):
-    """Parse JSON from LLM response, stripping markdown code fences if present."""
-    cleaned = text.strip()
-    cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
-    cleaned = re.sub(r"\n?```\s*$", "", cleaned)
-    return json.loads(cleaned)
 
 
 def _extract_sources(candidate) -> list[str]:
@@ -37,38 +19,79 @@ def _extract_sources(candidate) -> list[str]:
     return sources
 
 
-def generate_trending_topics_fast() -> list[dict]:
-    """Generate plausible finance episode topics without Google Search (seconds, reliable).
+# Canonical category list — order matters (broadest first).
+TOPIC_CATEGORIES = [
+    "macro",        # Macro-economics, Fed, rates, GDP, inflation
+    "companies",    # Company earnings, strategy, M&A
+    "tech",         # Tech sector, AI, semiconductors, software
+    "crypto",       # Crypto, Bitcoin, Ethereum, DeFi
+    "commodities",  # Oil, gold, copper, agriculture
+    "real_estate",  # Real estate, REITs, housing
+    "etfs_funds",   # ETFs, mutual funds, index investing
+]
 
-    Grounded search can block for minutes; the home feed uses this path by default.
-    """
-    client = _get_client()
-    response = client.models.generate_content(
-        model=MODEL,
-        contents="""You help finance YouTubers choose episode topics. Propose plausible, timely-feeling financial story ideas (themes may reflect real markets; you are not browsing the web).
-
-Cover variety: Fed & rates, megacap tech, AI semiconductors, crypto/ETFs, CRE/banks, oil & energy, earnings, consumer, EM flows, cybersecurity, M&A.
-
-Return JSON only with this exact shape:
-{
-  "topics": [
-    {"title": "Short headline-style title", "summary": "2-3 sentence summary for the creator"}
-  ]
+_CATEGORY_DESCRIPTIONS = {
+    "macro":       "macroeconomics, central bank policy, interest rates, inflation, GDP, employment, treasury yields, global trade",
+    "companies":   "company earnings, corporate strategy, M&A activity, IPOs, executive moves, business performance",
+    "tech":        "technology sector, AI and semiconductors, software platforms, cloud computing, cybersecurity, social media companies",
+    "crypto":      "cryptocurrency, Bitcoin, Ethereum, DeFi, stablecoins, crypto regulation, blockchain, digital assets, NFTs",
+    "commodities": "oil and energy, gold, copper, agriculture, OPEC, commodity trading, natural resources",
+    "real_estate": "commercial and residential real estate, REITs, housing market, mortgage rates, property investment",
+    "etfs_funds":  "ETFs, index funds, passive investing, fund flows, asset allocation, portfolio strategy",
 }
 
-Return exactly 20 topics with distinct titles (home UI shows top 9 plus ranks 10–20). Valid JSON only, no markdown fences.""",
+
+def generate_trending_topics_fast(category: str | None = None) -> list[dict]:
+    """Generate plausible finance episode topics without Google Search (seconds, reliable).
+
+    When category is given, all 20 topics focus on that category.
+    When category is None, return a broad mix with category tags.
+    """
+    client = get_gemini_client()
+
+    if category and category in _CATEGORY_DESCRIPTIONS:
+        focus = _CATEGORY_DESCRIPTIONS[category]
+        prompt = f"""You help finance YouTubers choose episode topics. Propose plausible, timely-feeling financial story ideas focused on: {focus}.
+
+Return JSON only with this exact shape:
+{{
+  "topics": [
+    {{"title": "Short headline-style title", "summary": "2-3 sentence summary for the creator", "category": "{category}"}}
+  ]
+}}
+
+Return exactly 20 topics with distinct titles. All topics must be about {focus}. Valid JSON only, no markdown fences."""
+    else:
+        cat_list = ", ".join(f'"{c}"' for c in TOPIC_CATEGORIES)
+        prompt = f"""You help finance YouTubers choose episode topics. Propose plausible, timely-feeling financial story ideas (themes may reflect real markets; you are not browsing the web).
+
+Cover variety across these categories: {", ".join(f"{k}: {v}" for k, v in _CATEGORY_DESCRIPTIONS.items())}
+
+Return JSON only with this exact shape:
+{{
+  "topics": [
+    {{"title": "Short headline-style title", "summary": "2-3 sentence summary for the creator", "category": "<one of {cat_list}>"}}
+  ]
+}}
+
+Return exactly 20 topics with distinct titles (home UI shows top 9 plus ranks 10–20). Each topic must have exactly one category from the list above. Valid JSON only, no markdown fences."""
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
         config=types.GenerateContentConfig(temperature=0.45),
     )
-    parsed = _parse_json_response(response.text)
+    parsed = parse_json_response(response.text)
     topics = parsed.get("topics", [])
     for topic in topics:
         topic.setdefault("sources", [])
+        topic.setdefault("category", "macro")
     return topics
 
 
 def search_trending_topics() -> list[dict]:
     """Search for trending financial news topics using Gemini with Google Search grounding."""
-    client = _get_client()
+    client = get_gemini_client()
     google_search_tool = types.Tool(google_search=types.GoogleSearch())
 
     # Single call covering all categories for speed
@@ -101,7 +124,7 @@ Return 12–15 of the most important and recent results (fewer is better than in
     if response.candidates:
         sources = _extract_sources(response.candidates[0])
 
-    parsed = _parse_json_response(response.text)
+    parsed = parse_json_response(response.text)
     topics = parsed.get("topics", [])
 
     for topic in topics:
@@ -112,7 +135,7 @@ Return 12–15 of the most important and recent results (fewer is better than in
 
 def search_custom_topic(query: str) -> list[dict]:
     """Search a custom topic using Gemini with Google Search grounding."""
-    client = _get_client()
+    client = get_gemini_client()
     google_search_tool = types.Tool(google_search=types.GoogleSearch())
 
     response = client.models.generate_content(
@@ -140,7 +163,7 @@ Return the top 5 most relevant and recent results. Only return valid JSON, no ot
     if response.candidates:
         sources = _extract_sources(response.candidates[0])
 
-    parsed = _parse_json_response(response.text)
+    parsed = parse_json_response(response.text)
     topics = parsed.get("topics", [])
 
     for topic in topics:

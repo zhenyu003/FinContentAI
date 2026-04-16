@@ -15,11 +15,30 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// On 401, refresh session and retry once
+api.interceptors.response.use(
+  (res) => res,
+  async (error) => {
+    const original = error.config;
+    if (error.response?.status === 401 && !original._retried) {
+      original._retried = true;
+      const { data: { session } } = await supabase.auth.refreshSession();
+      if (session?.access_token) {
+        original.headers.Authorization = `Bearer ${session.access_token}`;
+        return api(original);
+      }
+    }
+    return Promise.reject(error);
+  },
+);
+
 // ============ Topics ============
-export async function fetchTopics(options?: { liveSearch?: boolean }) {
-  const params = options?.liveSearch ? { live_search: "true" } : undefined;
+export async function fetchTopics(options?: { liveSearch?: boolean; category?: string }) {
+  const params: Record<string, string> = {};
+  if (options?.liveSearch) params.live_search = "true";
+  if (options?.category) params.category = options.category;
   const res = await api.get("/topics", {
-    params,
+    params: Object.keys(params).length > 0 ? params : undefined,
     timeout: 45_000,
   });
   return res.data;
@@ -69,6 +88,24 @@ export async function generateScenes(params: {
   return res.data;
 }
 
+export async function splitScene(params: {
+  scene_number: number;
+  description: string;
+  narration: string;
+  audio_duration: number;
+}) {
+  const res = await api.post("/scenes/split", params);
+  return res.data as {
+    sub_scenes: {
+      scene_number: number;
+      scene_type: string;
+      description: string;
+      narration: string;
+      is_chart: boolean;
+    }[];
+  };
+}
+
 export async function generateImage(prompt: string, aspect_ratio: string) {
   const res = await api.post("/image/generate", { prompt, aspect_ratio });
   return res.data;
@@ -81,7 +118,7 @@ export async function uploadChartImage(dataUrl: string) {
 
 export async function generateAudio(text: string, voice: string) {
   const res = await api.post("/audio/generate", { text, voice });
-  return res.data;
+  return res.data as { audio_url: string; duration_sec: number };
 }
 
 /** Google Veo motion clip (long-running; default 10 min client timeout). */
@@ -97,15 +134,17 @@ export async function generateMotionVeo(params: {
   return res.data as { video_url: string };
 }
 
-export type VideoSceneInput =
-  | { image_path: string; audio_path: string; narration: string }
-  | { video_clip_path: string; audio_path: string; narration: string };
-
 export async function generateVideo(
-  scenes: VideoSceneInput[],
-  aspect_ratio: string
+  scenes: (
+    | { image_path: string; audio_path: string; narration: string }
+    | { video_clip_path: string; audio_path: string; narration: string }
+  )[],
+  aspect_ratio: string,
+  include_transcript: boolean = true,
 ) {
-  const res = await api.post("/video/generate", { scenes, aspect_ratio });
+  const res = await api.post("/video/generate", { scenes, aspect_ratio, include_transcript }, {
+    timeout: 600_000, // Whisper alignment + FFmpeg synthesis can take several minutes
+  });
   return res.data;
 }
 
@@ -132,6 +171,45 @@ export async function generateDescription(params: {
 export async function generateThumbnail(prompt: string, aspect_ratio: string) {
   const res = await api.post("/metadata/thumbnail", { prompt, aspect_ratio });
   return res.data;
+}
+
+// ============ Motion Studio ============
+export async function splitSceneToShots(params: {
+  scene_description: string;
+  narration: string;
+  audio_duration: number;
+  aspect_ratio: string;
+}) {
+  const res = await api.post("/motion/split-shots", params);
+  return res.data as {
+    shots: {
+      shot_index: number;
+      visual_prompt: string;
+      start: number;
+      end: number;
+      freeze_tail: boolean;
+    }[];
+  };
+}
+
+export async function stitchMotionShots(params: {
+  shot_videos: string[];
+  audio_url: string;
+  audio_duration: number;
+  tail_strategy?: string;
+}) {
+  const res = await api.post("/motion/stitch", params, { timeout: 120_000 });
+  return res.data as { video_url: string };
+}
+
+// ============ Template Recommendation ============
+export async function recommendTemplate(
+  topic_title: string,
+  topic_summary: string,
+  templates: string[]
+) {
+  const res = await api.post("/idea/recommend-template", { topic_title, topic_summary, templates });
+  return res.data as { template: string; reason: string };
 }
 
 // ============ Narrative Template ============
@@ -187,17 +265,6 @@ export async function generateSocialImage(prompt: string, aspect_ratio: string) 
   return res.data;
 }
 
-// ============ Trend Explorer ============
-export async function fetchTrends() {
-  const res = await api.get("/trends");
-  return res.data;
-}
-
-export async function generateFromTrend(trend: Record<string, unknown>, content_type: "text" | "video") {
-  const res = await api.post("/generate", { trend, content_type });
-  return res.data;
-}
-
 // ============ Profile ============
 export async function getProfile() {
   const res = await api.get("/profile");
@@ -209,10 +276,6 @@ export async function updateProfile(data: Record<string, unknown>) {
   return res.data;
 }
 
-export async function getProfileStyles() {
-  const res = await api.get("/profile/styles");
-  return res.data;
-}
 
 // ============ Credits ============
 export async function getCredits() {
@@ -230,16 +293,6 @@ export async function purchaseCredits(amount: number) {
   return res.data;
 }
 
-// ============ History ============
-export async function getHistory(params?: { content_type?: string; limit?: number; offset?: number }) {
-  const res = await api.get("/history", { params });
-  return res.data;
-}
-
-export async function createHistoryRecord(data: Record<string, unknown>) {
-  const res = await api.post("/history", data);
-  return res.data;
-}
 
 // ============ Knowledge Base ============
 export async function getKnowledgeItems(limit = 50, offset = 0) {
@@ -254,6 +307,27 @@ export async function addKnowledgeItem(data: {
   source_url?: string;
 }) {
   const res = await api.post("/knowledge", data);
+  return res.data;
+}
+
+export async function addKnowledgeFromUrl(title: string, url: string) {
+  const res = await api.post("/knowledge/add-url", { title, url }, { timeout: 60_000 });
+  return res.data;
+}
+
+export async function addKnowledgeFromFile(title: string, file: File) {
+  const form = new FormData();
+  form.append("title", title);
+  form.append("file", file);
+  const res = await api.post("/knowledge/upload-file", form, {
+    timeout: 120_000,
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data;
+}
+
+export async function updateKnowledgeItem(itemId: string, data: { title?: string; content?: string }) {
+  const res = await api.put(`/knowledge/${itemId}`, data);
   return res.data;
 }
 

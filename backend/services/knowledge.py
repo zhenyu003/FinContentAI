@@ -1,25 +1,11 @@
-import os
 import uuid
 from datetime import datetime, timezone
 
-from google import genai
-
 from services.supabase_client import get_supabase_client
+from services.utils import get_gemini_client
 
 
-EMBEDDING_MODEL = "gemini-embedding-exp-03-07"
-
-_genai_client = None
-
-
-def _get_genai_client() -> genai.Client:
-    global _genai_client
-    if _genai_client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY must be set")
-        _genai_client = genai.Client(api_key=api_key)
-    return _genai_client
+EMBEDDING_MODEL = "gemini-embedding-001"
 
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
@@ -59,10 +45,19 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
     return chunks
 
 
+EMBEDDING_DIMENSIONS = 768
+
+
 def generate_embedding(text: str) -> list[float]:
     """Generate an embedding vector for the given text using Google Gemini."""
-    client = _get_genai_client()
-    result = client.models.embed_content(model=EMBEDDING_MODEL, contents=text)
+    from google.genai import types
+
+    client = get_gemini_client()
+    result = client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=text,
+        config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS),
+    )
     return result.embeddings[0].values
 
 
@@ -72,6 +67,7 @@ async def add_knowledge_item(
     content: str,
     source_type: str = "text",
     source_url: str = None,
+    metadata: dict = None,
 ) -> dict:
     """Add a knowledge item: store it, chunk its content, and embed each chunk."""
     supabase = get_supabase_client()
@@ -86,6 +82,7 @@ async def add_knowledge_item(
         "content": content,
         "source_type": source_type,
         "source_url": source_url,
+        "metadata": metadata or {},
         "created_at": now,
     }
 
@@ -98,10 +95,10 @@ async def add_knowledge_item(
         embedding = generate_embedding(chunk_text_content)
         chunk_record = {
             "id": str(uuid.uuid4()),
-            "knowledge_item_id": item_id,
+            "item_id": item_id,
             "user_id": user_id,
             "chunk_index": i,
-            "content": chunk_text_content,
+            "chunk_text": chunk_text_content,
             "embedding": embedding,
         }
         supabase.table("knowledge_chunks").insert(chunk_record).execute()
@@ -119,18 +116,21 @@ async def search_knowledge(
     result = supabase.rpc(
         "search_knowledge",
         {
-            "query_embedding": query_embedding,
-            "match_count": match_count,
-            "filter_user_id": user_id,
+            "p_query_embedding": query_embedding,
+            "p_match_count": match_count,
+            "p_user_id": user_id,
+            "p_match_threshold": 0.5,
         },
     ).execute()
 
     return result.data if result.data else []
 
 
-async def get_knowledge_context(user_id: str, topic: str) -> str:
+async def get_knowledge_context(user_id: str, topic: str, min_similarity: float = 0.7) -> str:
     """Retrieve relevant knowledge chunks and format them as context for prompts."""
     results = await search_knowledge(user_id, topic)
+    # Filter out low-similarity results to avoid injecting irrelevant knowledge
+    results = [r for r in results if r.get("similarity", 0) >= min_similarity]
 
     if not results:
         return ""
@@ -138,7 +138,7 @@ async def get_knowledge_context(user_id: str, topic: str) -> str:
     lines = []
     for r in results:
         title = r.get("title", "")
-        content = r.get("content", "")
+        content = r.get("chunk_text", "") or r.get("content", "")
         prefix = f"[{title}] " if title else ""
         lines.append(f"- {prefix}{content}")
 

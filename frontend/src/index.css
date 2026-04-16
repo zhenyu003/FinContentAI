@@ -205,6 +205,33 @@ textarea {
   gap: 16px;
 }
 
+/* Category tabs */
+.category-tab {
+  padding: 6px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.category-tab:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.category-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.category-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .topic-grid-eyebrow {
   margin-bottom: 12px;
 }
@@ -468,8 +495,7 @@ textarea {
   color: var(--text-dim);
 }
 
-.topic-card:hover .icon-x,
-.trend-card:hover .icon-x {
+.topic-card:hover .icon-x {
   color: var(--text);
 }
 
@@ -542,6 +568,108 @@ textarea {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge-recommended {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  white-space: nowrap;
+}
+
+.recommend-reason {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #34d399;
+  margin-top: 4px;
+  font-style: italic;
+}
+
+/* QA Follow-up Questions */
+.qa-item {
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.qa-item:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.qa-question {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+.qa-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.qa-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qa-edit-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.qa-edit-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.1);
+}
+.qa-chip {
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+  max-width: 100%;
+}
+.qa-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.qa-chip.active {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--text);
+}
+.qa-chip--custom {
+  border-style: dashed;
+  font-style: italic;
+}
+.qa-custom-input {
+  margin-top: 8px;
+  width: 100%;
 }
 
 /* Section */
@@ -833,19 +961,20 @@ textarea {
 }
 
 .scene-table textarea {
-  min-height: 60px;
+  min-height: 120px;
+  width: 100%;
   font-size: 13px;
 }
 
 .scene-table .media-cell {
-  min-width: 180px;
+  min-width: 200px;
   text-align: center;
+  overflow: visible;
 }
 
 .scene-table .media-cell img {
-  width: 160px;
-  height: 90px;
-  object-fit: cover;
+  max-width: 100%;
+  height: auto;
   border-radius: 6px;
   margin-bottom: 8px;
 }
@@ -1016,99 +1145,6 @@ textarea {
 
 .text-sm {
   font-size: 13px;
-}
-
-/* ============ Trend Explorer ============ */
-
-.trend-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 16px;
-}
-
-.trend-card {
-  cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
-  display: flex;
-  flex-direction: column;
-}
-
-.trend-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-}
-
-.trend-card h3 {
-  font-size: 16px;
-  margin-bottom: 8px;
-  color: var(--text);
-}
-
-.trend-card p {
-  font-size: 13px;
-  color: var(--text-dim);
-  line-height: 1.55;
-  margin-bottom: 12px;
-  flex: 1;
-}
-
-.trend-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.trend-engagement {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.trend-ai-summary {
-  font-size: 13px;
-  color: var(--text-dim);
-  line-height: 1.55;
-  margin-bottom: 12px;
-  flex: 1;
-  font-style: italic;
-  border-left: 2px solid var(--accent);
-  padding-left: 10px;
-}
-
-.trend-metrics {
-  display: flex;
-  gap: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  margin-bottom: 0;
-}
-
-.trend-metric {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-dim);
-  line-height: 1;
-}
-
-.trend-metric-icon {
-  font-size: 15px;
-  line-height: 1;
-}
-
-.trend-card:hover .trend-metric {
-  color: var(--text);
-}
-
-.trend-card-footer {
-  padding-top: 10px;
-  margin-top: 12px;
-  border-top: 1px solid var(--border);
 }
 
 /* ============ Modal ============ */

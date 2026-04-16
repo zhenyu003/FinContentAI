@@ -4,8 +4,12 @@ import { useAuth } from "../contexts/AuthContext";
 import {
   getKnowledgeItems,
   addKnowledgeItem,
+  addKnowledgeFromUrl,
+  addKnowledgeFromFile,
+  updateKnowledgeItem,
   deleteKnowledgeItem,
   searchKnowledge,
+  BACKEND,
 } from "../api/client";
 
 interface KnowledgeItem {
@@ -14,6 +18,7 @@ interface KnowledgeItem {
   content: string;
   source_type: string;
   source_url?: string;
+  metadata?: { original_filename?: string };
   created_at: string;
 }
 
@@ -45,6 +50,17 @@ export default function KnowledgePage() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
 
+  // Delete confirmation modal
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Expand / Edit
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+
   useEffect(() => {
     if (!authLoading && !user) {
       navigate("/auth");
@@ -60,19 +76,11 @@ export default function KnowledgePage() {
       .finally(() => setLoadingItems(false));
   };
 
+  const userId = user?.id;
   useEffect(() => {
     loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  const readFileAsText = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsText(file);
-    });
-  };
+  }, [userId]);
 
   const handleAdd = async () => {
     if (!newTitle.trim()) return;
@@ -83,28 +91,31 @@ export default function KnowledgePage() {
     setAdding(true);
     setError("");
     try {
-      let content = newContent;
+      let newItem: any;
+
       if (sourceType === "url") {
-        content = newUrl;
+        // Backend fetches URL content, summarizes, and stores
+        newItem = await addKnowledgeFromUrl(newTitle, newUrl);
       } else if (sourceType === "pdf" && pdfFile) {
-        content = await readFileAsText(pdfFile);
-        if (!content.trim()) {
-          content = `[Uploaded PDF: ${pdfFile.name}]`;
-        }
+        // Backend parses file, summarizes, and stores
+        newItem = await addKnowledgeFromFile(newTitle, pdfFile);
+      } else {
+        // Plain text — store directly
+        newItem = await addKnowledgeItem({
+          title: newTitle,
+          content: newContent,
+          source_type: "text",
+        });
       }
 
-      await addKnowledgeItem({
-        title: newTitle,
-        content,
-        source_type: sourceType,
-        source_url: sourceType === "url" ? newUrl : undefined,
-      });
+      if (newItem && newItem.id) {
+        setItems((prev) => [newItem as KnowledgeItem, ...prev]);
+      }
       setNewTitle("");
       setNewContent("");
       setNewUrl("");
       setPdfFile(null);
       setSourceType("text");
-      loadItems();
     } catch (e: any) {
       setError("Failed to add item: " + e.message);
     } finally {
@@ -112,14 +123,48 @@ export default function KnowledgePage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this knowledge item?")) return;
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     setError("");
     try {
-      await deleteKnowledgeItem(id);
-      setItems((prev) => prev.filter((item) => item.id !== id));
+      await deleteKnowledgeItem(deleteTarget.id);
+      setItems((prev) => prev.filter((item) => item.id !== deleteTarget.id));
+      setDeleteTarget(null);
     } catch (e: any) {
       setError("Failed to delete item: " + e.message);
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const startEdit = (item: KnowledgeItem) => {
+    setEditingId(item.id);
+    setEditTitle(item.title);
+    setEditContent(item.content);
+    setExpandedId(item.id);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setExpandedId(null);
+    setEditTitle("");
+    setEditContent("");
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingId) return;
+    setSavingEdit(true);
+    setError("");
+    try {
+      const updated = await updateKnowledgeItem(editingId, { title: editTitle, content: editContent });
+      setItems((prev) => prev.map((it) => (it.id === editingId ? { ...it, ...updated } : it)));
+      setEditingId(null);
+    } catch (e: any) {
+      setError("Failed to update: " + e.message);
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -171,6 +216,58 @@ export default function KnowledgePage() {
 
   return (
     <div>
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            zIndex: 9998,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onClick={() => !deleting && setDeleteTarget(null)}
+        >
+          <div
+            style={{
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: "24px 28px",
+              maxWidth: 400,
+              width: "90%",
+              boxShadow: "0 12px 48px rgba(0,0,0,0.6)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: 16, marginBottom: 8 }}>Delete Knowledge Item</h3>
+            <p className="text-dim" style={{ fontSize: 13, marginBottom: 20, lineHeight: 1.5 }}>
+              Are you sure you want to delete <strong style={{ color: "var(--text)" }}>{deleteTarget.title}</strong>? This will also remove all associated embeddings and cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                className="btn btn-sm"
+                style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-sm"
+                style={{ background: "var(--red)", color: "#fff", border: "none" }}
+                onClick={confirmDelete}
+                disabled={deleting}
+              >
+                {deleting ? <span className="spinner" /> : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <h2 className="section-title">Knowledge Base</h2>
 
       {error && (
@@ -254,7 +351,7 @@ export default function KnowledgePage() {
               {pdfFile ? (
                 <p>{pdfFile.name} <span className="text-dim text-sm">({(pdfFile.size / 1024).toFixed(1)} KB)</span></p>
               ) : (
-                <p className="text-dim">Click to select a file (.txt, .md, .csv, .pdf)</p>
+                <p className="text-dim">Click to select a file (.txt, .md, .csv, .pdf) — max 5 MB</p>
               )}
             </div>
           )}
@@ -265,7 +362,14 @@ export default function KnowledgePage() {
               onClick={handleAdd}
               disabled={adding}
             >
-              {adding ? <span className="spinner" /> : "Add to Knowledge Base"}
+              {adding ? (
+                <>
+                  <span className="spinner" />{" "}
+                  {sourceType === "url" ? "Fetching & summarizing..." : sourceType === "pdf" ? "Parsing & summarizing..." : "Adding..."}
+                </>
+              ) : (
+                "Add to Knowledge Base"
+              )}
             </button>
           </div>
         </div>
@@ -331,34 +435,92 @@ export default function KnowledgePage() {
           <p className="text-dim">No knowledge items yet. Add some content above to get started.</p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {items.map((item) => (
-              <div key={item.id} className="card" style={{ padding: 16 }}>
-                <div className="flex-between" style={{ marginBottom: 8 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontWeight: 600, fontSize: 15 }}>{item.title}</span>
-                    <span
-                      className="badge"
-                      style={sourceBadgeColor(item.source_type)}
+            {items.map((item) => {
+              const isExpanded = expandedId === item.id;
+              const isEditing = editingId === item.id;
+              const isUrl = item.source_type === "url";
+              const isPdf = item.source_type === "pdf";
+              const sourceLink = item.source_url || "";
+
+              return (
+                <div key={item.id} className="card" style={{ padding: 16 }}>
+                  {/* Header row */}
+                  <div className="flex-between" style={{ marginBottom: 8 }}>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", flex: 1 }}
+                      onClick={() => { setExpandedId(isExpanded ? null : item.id); if (isEditing) cancelEdit(); }}
                     >
-                      {item.source_type}
-                    </span>
+                      <span style={{ fontSize: 11, color: "var(--text-dim)", transition: "transform 0.15s", transform: isExpanded ? "rotate(90deg)" : "none" }}>&#9654;</span>
+                      <span style={{ fontWeight: 600, fontSize: 15 }}>{item.title}</span>
+                      <span className="badge" style={sourceBadgeColor(item.source_type)}>{item.source_type}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                      <button
+                        className="btn btn-sm"
+                        style={{ color: "var(--accent)", border: "1px solid var(--border)", background: "transparent" }}
+                        onClick={() => isEditing ? cancelEdit() : startEdit(item)}
+                      >
+                        {isEditing ? "Cancel" : "Edit"}
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        style={{ color: "var(--red)", border: "1px solid var(--red)", background: "transparent" }}
+                        onClick={() => setDeleteTarget({ id: item.id, title: item.title })}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    className="btn btn-sm"
-                    style={{ color: "var(--red)", border: "1px solid var(--red)", background: "transparent" }}
-                    onClick={() => handleDelete(item.id)}
-                  >
-                    Delete
-                  </button>
+
+                  {/* Source link */}
+                  {sourceLink && (
+                    <p style={{ marginBottom: 6, fontSize: 13 }}>
+                      {isUrl ? (
+                        <a href={sourceLink} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", textDecoration: "none" }}>
+                          {sourceLink}
+                        </a>
+                      ) : isPdf ? (
+                        <a href={BACKEND + sourceLink} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", textDecoration: "none" }}>
+                          {item.metadata?.original_filename || "Download PDF"} ↓
+                        </a>
+                      ) : (
+                        <span className="text-dim">{sourceLink}</span>
+                      )}
+                    </p>
+                  )}
+
+                  {/* Edit mode */}
+                  {isEditing ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+                      <input
+                        type="text"
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        style={{ fontWeight: 600 }}
+                      />
+                      <textarea
+                        value={editContent}
+                        onChange={(e) => setEditContent(e.target.value)}
+                        rows={8}
+                        style={{ fontSize: 13, lineHeight: 1.6 }}
+                      />
+                      <div>
+                        <button className="btn btn-sm btn-primary" onClick={handleSaveEdit} disabled={savingEdit}>
+                          {savingEdit ? <><span className="spinner" /> Saving...</> : "Save Changes"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Content preview / full */
+                    <p className="text-sm text-dim" style={{ lineHeight: 1.6, marginBottom: 8, whiteSpace: isExpanded ? "pre-wrap" : undefined }}>
+                      {isExpanded ? item.content : (item.content.length > 200 ? item.content.slice(0, 200) + "..." : item.content)}
+                    </p>
+                  )}
+
+                  <span className="text-sm text-dim">{formatDate(item.created_at)}</span>
                 </div>
-                <p className="text-sm text-dim" style={{ lineHeight: 1.6, marginBottom: 8 }}>
-                  {item.content.length > 200
-                    ? item.content.slice(0, 200) + "..."
-                    : item.content}
-                </p>
-                <span className="text-sm text-dim">{formatDate(item.created_at)}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

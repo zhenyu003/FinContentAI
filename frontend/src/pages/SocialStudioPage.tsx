@@ -3,10 +3,9 @@ import { useNavigate } from "react-router-dom";
 import {
   refineSocialContent,
   generateSocialImage,
-  createHistoryRecord,
   BACKEND,
 } from "../api/client";
-import { useAuth } from "../contexts/AuthContext";
+
 
 interface PlatformContent {
   text: string;
@@ -25,7 +24,6 @@ interface SocialContent {
 
 export default function SocialStudioPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   const [content, setContent] = useState<SocialContent | null>(null);
   const [activePlatforms, setActivePlatforms] = useState<string[]>([]);
@@ -66,23 +64,10 @@ export default function SocialStudioPage() {
       });
       setEditablePrompts(prompts);
 
-      // Auto-save to history if logged in
-      if (user) {
-        const topicData = sessionStorage.getItem("social_topic");
-        const topic = topicData ? JSON.parse(topicData) : {};
-        createHistoryRecord({
-          content_type: "social_post",
-          topic_title: topic.title || "Untitled",
-          topic_summary: topic.summary || "",
-          post_data: { platforms: parsed.platforms, image_prompts: parsed.image_prompts },
-          platform: plats.join(", "),
-          status: "draft",
-        }).catch(() => {}); // silent fail
-      }
     } catch {
       navigate("/");
     }
-  }, [navigate, user]);
+  }, [navigate]);
 
   if (!content) {
     return (
@@ -386,7 +371,6 @@ export default function SocialStudioPage() {
           <span className="text-sm text-dim">
             Platforms: {activePlatforms.join(", ")} &middot; Images: {generatedCount} / {imagePrompts.length}
           </span>
-          {user && <span className="text-sm" style={{ color: "var(--green)" }}>Auto-saved to history</span>}
         </div>
       </div>
     </div>

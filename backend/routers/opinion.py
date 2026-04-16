@@ -22,8 +22,8 @@ async def refine_user_opinion(request: RefineOpinionRequest):
             idea=request.idea,
             user_opinion=request.user_opinion,
         )
-        # Flatten questions to just strings for frontend
-        questions = result.get("questions", [])
-        return {"questions": [q["question"] if isinstance(q, dict) else q for q in questions]}
+        return result
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

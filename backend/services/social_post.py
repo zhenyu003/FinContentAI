@@ -1,50 +1,6 @@
-import os
 import json
-import re
-import time
-from google import genai
-from google.genai import types
 
-
-def _get_client():
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is not set")
-    return genai.Client(api_key=api_key)
-
-
-MODEL = "gemini-2.5-flash"
-
-
-def _parse_json_response(text: str):
-    """Parse JSON from LLM response, stripping markdown code fences if present."""
-    cleaned = text.strip()
-    cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
-    cleaned = re.sub(r"\n?```\s*$", "", cleaned)
-    return json.loads(cleaned)
-
-
-def _call_llm(system_prompt: str, user_prompt: str, max_retries: int = 3) -> str:
-    """Make a call to Gemini with automatic retry on transient errors."""
-    client = _get_client()
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=user_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=0.7,
-                ),
-            )
-            return response.text
-        except Exception as e:
-            err_str = str(e)
-            is_transient = any(code in err_str for code in ["503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED"])
-            if is_transient and attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-                continue
-            raise
+from services.utils import call_llm, parse_json_response
 
 
 def _build_context_block(profile_context: str, knowledge_context: str) -> str:
@@ -123,8 +79,8 @@ Return JSON with this exact format:
   "suggested_platforms": ["linkedin", "instagram", "x"]
 }}"""
 
-    response_text = _call_llm(system_prompt, user_prompt)
-    return _parse_json_response(response_text)
+    response_text = call_llm(system_prompt, user_prompt)
+    return parse_json_response(response_text)
 
 
 def generate_social_content(
@@ -224,8 +180,8 @@ Return JSON with this exact format:
   ]
 }}"""
 
-    response_text = _call_llm(system_prompt, user_prompt)
-    return _parse_json_response(response_text)
+    response_text = call_llm(system_prompt, user_prompt)
+    return parse_json_response(response_text)
 
 
 def refine_social_content(platform: str, current_text: str, feedback: str) -> dict:
@@ -257,5 +213,5 @@ Return JSON with this exact format:
   "hashtags": ["relevant", "hashtags"]
 }}"""
 
-    response_text = _call_llm(system_prompt, user_prompt)
-    return _parse_json_response(response_text)
+    response_text = call_llm(system_prompt, user_prompt)
+    return parse_json_response(response_text)
