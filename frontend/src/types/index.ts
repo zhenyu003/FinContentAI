@@ -91,6 +91,8 @@ export interface Scene {
   image_url?: string;
   /** Final stitched MP4 from Motion Studio. */
   motion_url?: string;
+  /** Recorded chart animation clip (separate from Motion Studio asset). */
+  chart_motion_url?: string;
   audio_url?: string;
   audio_duration?: number;
   /** Persisted shots from Motion Studio. */

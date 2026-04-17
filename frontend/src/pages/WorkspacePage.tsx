@@ -75,10 +75,8 @@ export default function WorkspacePage() {
   const handleChartImage = useCallback(
     async (index: number, dataUrl: string, config: ChartConfig, videoUrl?: string) => {
       setChartDataUrls((prev) => ({ ...prev, [index]: dataUrl }));
-      // When `videoUrl` is provided we set `motion_url`; the video synthesis pipeline
-      // already prefers motion_url over image_path (see handleGenVideo), so the final
-      // video will use the animated chart clip. If the animation recording failed we
-      // explicitly clear any stale motion_url so the fallback PNG is used.
+      // Keep chart animation separate from Motion Studio asset (`motion_url`).
+      // The synthesis step will prefer chart_motion_url for chart scenes.
       try {
         const { image_url } = await uploadChartImage(dataUrl);
         updateScene(index, {
@@ -86,7 +84,7 @@ export default function WorkspacePage() {
           chartConfig: config,
           mode: "chart",
           type: "chart",
-          motion_url: videoUrl ?? undefined,
+          chart_motion_url: videoUrl ?? undefined,
         });
       } catch {
         updateScene(index, {
@@ -94,7 +92,7 @@ export default function WorkspacePage() {
           chartConfig: config,
           mode: "chart",
           type: "chart",
-          motion_url: videoUrl ?? undefined,
+          chart_motion_url: videoUrl ?? undefined,
         });
       }
     },
@@ -328,7 +326,7 @@ export default function WorkspacePage() {
   const allReady = scenes.every((s) => {
     if (!s.audio_url) return false;
     // Scene needs at least one visual: a motion video, an image, or a chart
-    return !!(s.motion_url || s.image_url);
+    return !!(s.motion_url || s.chart_motion_url || s.image_url);
   });
 
   const handleGenVideo = async () => {
@@ -368,10 +366,14 @@ export default function WorkspacePage() {
     try {
       const sceneInputs = scenes.map((s) => {
         const audio_path = s.audio_url!.replace(/^\//, "");
-        // If the scene has a stitched motion video, use it (regardless of visual mode)
-        if (s.motion_url) {
+        // Prefer Motion Studio asset; for chart scenes, fall back to chart animation clip.
+        const chartMode = (s.mode ?? s.type) === "chart";
+        const chartClip = chartMode ? s.chart_motion_url : undefined;
+        const legacyChartClip = chartMode && !s.chart_motion_url && !s.shots?.length ? s.motion_url : undefined;
+        const visualClip = s.motion_url ?? chartClip ?? legacyChartClip;
+        if (visualClip) {
           return {
-            video_clip_path: s.motion_url.replace(/^\//, ""),
+            video_clip_path: visualClip.replace(/^\//, ""),
             audio_path,
             narration: s.narration,
           };
@@ -737,7 +739,7 @@ export default function WorkspacePage() {
                   )}
 
                   {/* Long scene tip — static images work best under 12s */}
-                  {estimateSceneSec(scene) > 12 && !scene.motion_url && (getSceneMode(i) === "image" || getSceneMode(i) === "chart") && (
+                  {estimateSceneSec(scene) > 12 && !scene.motion_url && !scene.chart_motion_url && (getSceneMode(i) === "image" || getSceneMode(i) === "chart") && (
                     <div style={{
                       borderTop: "1px solid var(--border)",
                       marginTop: 8,
@@ -766,7 +768,9 @@ export default function WorkspacePage() {
                   {getSceneMode(i) === "chart" && (
                     <ChartConfigPanel
                       description={scene.description}
-                      onChartImage={(dataUrl, config) => handleChartImage(i, dataUrl, config)}
+                      onChartImage={(dataUrl, config, videoUrl) =>
+                        handleChartImage(i, dataUrl, config, videoUrl)
+                      }
                       savedConfig={scene.chartConfig}
                     />
                   )}
