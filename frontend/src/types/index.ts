@@ -79,6 +79,8 @@ export interface ShotData {
   end: number;
   freeze_tail: boolean;
   motion_url?: string;
+  /** Optional anchor image for Veo image-to-video. */
+  reference_image_url?: string;
 }
 
 export interface Scene {

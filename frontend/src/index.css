@@ -1072,7 +1072,7 @@ textarea {
 
 /* Thumbnail preview */
 .thumbnail-preview {
-  max-width: 400px;
+  max-width: 260px;
   border-radius: 8px;
 }
 

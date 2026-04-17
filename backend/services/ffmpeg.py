@@ -205,11 +205,26 @@ def synthesize_video(scenes: list[dict], aspect_ratio: str = "16:9", include_tra
             if video_clip_path:
                 # Motion clips: scale to target resolution so all segments
                 # share the same dimensions (consistent subtitle rendering).
+                # When the clip is shorter than its narration audio (chart
+                # animations are typically 2 s vs 8 s+ of audio), extend the
+                # last frame with tpad so the video stream lasts the full
+                # audio duration — otherwise the segment's video stream ends
+                # early and the final video gets truncated to the shorter of
+                # video/audio.
                 audio_dur = _get_audio_duration(audio_path) if audio_path else 5.0
+                clip_dur = _get_video_duration(video_clip_path)
+                freeze_needed = max(0.0, audio_dur - clip_dur)
                 vf_scale = (
                     f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
                     f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
                 )
+                if freeze_needed > 0.05:
+                    # tpad runs AFTER the input ends, cloning the last frame
+                    # for stop_duration seconds. Combined with -t we get an
+                    # output exactly audio_dur long.
+                    vf_scale += (
+                        f",tpad=stop_mode=clone:stop_duration={freeze_needed:.2f}"
+                    )
                 cmd = [
                     "ffmpeg", "-y",
                     "-i", video_clip_path,
@@ -286,69 +301,79 @@ def synthesize_video(scenes: list[dict], aspect_ratio: str = "16:9", include_tra
         ]
         subprocess.run(concat_cmd, capture_output=True, text=True, check=True)
 
-        # Step 3: Burn subtitles onto the concatenated video.
-        # Extract the FULL audio from the concat video and run forced
-        # alignment with the complete narration text.  This gives
-        # timestamps directly on the final video's timeline — no
-        # cumulative offset calculation needed, eliminating drift.
+        # Step 3: Burn subtitles onto the concatenated video using libass
+        # via ffmpeg's `subtitles` filter (ASS format).
+        #
+        # Why ASS over drawtext:
+        #   - drawtext chains grow to 60+ filters on long videos; one bad
+        #     escape breaks the whole graph.
+        #   - libass parses each Dialogue line independently; a bad line
+        #     only drops itself.
+        #   - libass handles automatic line wrapping, bidi, font fallback,
+        #     margins, and aspect-ratio-aware scaling natively (PlayRes).
+        #
+        # Drift mitigation: stable-ts forced-alignment on a full multi-minute
+        # concatenated audio track can drift — the model was trained on
+        # ~30s windows. Fix: align each scene's narration against its OWN
+        # TTS audio file, then apply a cumulative offset equal to the sum
+        # of TTS audio durations. Since each segment in the concat is built
+        # with `-t audio_dur`, the cumulative-offset timeline exactly
+        # matches positions in the final concat video.
         if include_transcript:
             from services.whisper_align import align_words, _chunk_words
+            from services.subtitle_ass import build_ass, escape_filter_path
 
-            # 3a. Extract audio from concatenated video
-            extracted_audio = os.path.join(save_dir, f"audio_{output_id}.wav")
-            segment_paths.append(extracted_audio)  # track for cleanup
-            subprocess.run(
-                [
-                    "ffmpeg", "-y",
-                    "-i", concat_raw,
-                    "-vn", "-acodec", "pcm_s16le",
-                    "-ar", "16000", "-ac", "1",
-                    extracted_audio,
-                ],
-                capture_output=True, text=True, check=True,
-            )
+            is_vertical = aspect_ratio == "9:16"
+            # Slightly smaller chunks on vertical to reduce forced wrapping.
+            chunk_size = 7 if is_vertical else 10
 
-            # 3b. Join all narration texts with spaces
-            full_text = " ".join(n.strip() for n in segment_narrations if n.strip())
+            # Per-scene align with cumulative offset.
+            all_chunks: list[dict] = []
+            cumulative_offset = 0.0
+            for seg_audio, narration in zip(segment_audio_paths, segment_narrations):
+                seg_dur = _get_audio_duration(seg_audio) if seg_audio else 0.0
 
-            # 3c. Forced-align the full text against extracted audio
-            words = align_words(extracted_audio, full_text) if full_text else []
-            chunks = _chunk_words(words) if words else []
+                if not narration.strip():
+                    cumulative_offset += seg_dur
+                    continue
 
-            all_drawtext_parts: list[str] = []
-            font_path = _find_font()
-            temp_font = os.path.join(tempfile.gettempdir(), "subtitle_font.ttf")
-            if font_path and not os.path.exists(temp_font):
-                shutil.copy(font_path, temp_font)
-            font_escaped = temp_font.replace(":", "\\:")
+                # Each call is ≤ ~15s of audio — inside stable-ts's sweet spot.
+                words = align_words(seg_audio, narration)
+                for w in words:
+                    w["start"] += cumulative_offset
+                    w["end"] += cumulative_offset
 
-            for ci, chunk in enumerate(chunks):
-                start = chunk[0]["start"]
-                end = chunk[-1]["end"]
-                text = " ".join(w["word"] for w in chunk)
-                escaped = (
-                    text
-                    .replace("\\", "\\\\")
-                    .replace("'", "\u2019")
-                    .replace("%", "%%")
-                    .replace(":", "\\:")
-                )
-                all_drawtext_parts.append(
-                    f"drawtext=fontfile='{font_escaped}'"
-                    f":text='{escaped}'"
-                    f":fontsize=36:fontcolor=white"
-                    f":borderw=2:bordercolor=black"
-                    f":x=(w-text_w)/2:y=h-th-50"
-                    f":enable='between(t\\,{start:.3f}\\,{end:.3f})'"
-                )
+                for chunk in _chunk_words(words, target_size=chunk_size):
+                    all_chunks.append({
+                        "start": chunk[0]["start"],
+                        "end": chunk[-1]["end"],
+                        "text": " ".join(w["word"] for w in chunk),
+                    })
+
+                cumulative_offset += seg_dur
 
             final_output = os.path.join(save_dir, f"final_{output_id}.mp4")
 
-            if all_drawtext_parts:
+            if all_chunks:
+                ass_content = build_ass(
+                    all_chunks,
+                    video_width=int(width),
+                    video_height=int(height),
+                    aspect_ratio=aspect_ratio,
+                )
+                ass_path = os.path.join(save_dir, f"sub_{output_id}.ass")
+                with open(ass_path, "w", encoding="utf-8") as f:
+                    f.write(ass_content)
+                segment_paths.append(ass_path)  # track for cleanup
+
+                # subtitles filter path escape: colons and backslashes.
+                escaped_ass = escape_filter_path(os.path.abspath(ass_path))
+                vf_arg = f"subtitles='{escaped_ass}'"
+
                 sub_cmd = [
                     "ffmpeg", "-y",
                     "-i", concat_raw,
-                    "-vf", ",".join(all_drawtext_parts),
+                    "-vf", vf_arg,
                     "-c:v", "libx264",
                     "-c:a", "copy",
                     "-pix_fmt", "yuv420p",
@@ -357,10 +382,14 @@ def synthesize_video(scenes: list[dict], aspect_ratio: str = "16:9", include_tra
                 ]
                 result = subprocess.run(sub_cmd, capture_output=True, text=True)
                 if result.returncode != 0:
-                    print(f"[subtitles] drawtext failed: {result.stderr[:500]}")
+                    print(
+                        f"[subtitles] libass burn failed (chunks={len(all_chunks)}, "
+                        f"ass={ass_path})"
+                    )
+                    print(f"[subtitles] stderr tail:\n{result.stderr[-2000:]}")
                     shutil.copy(concat_raw, final_output)
                 else:
-                    print(f"[subtitles] burned {len(all_drawtext_parts)} subtitle chunks onto final video")
+                    print(f"[subtitles] burned {len(all_chunks)} ASS dialogue lines via libass")
             else:
                 shutil.copy(concat_raw, final_output)
         else:

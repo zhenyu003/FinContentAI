@@ -83,9 +83,22 @@ export async function generateScenes(params: {
   qa_answers: string[];
   duration: string;
   narrative_template: string;
+  aspect_ratio: string;
 }) {
   const res = await api.post("/scenes/generate", params);
   return res.data;
+}
+
+export async function generateOneScene(params: {
+  prev_scene?: { description: string; narration: string } | null;
+  next_scene?: { description: string; narration: string } | null;
+  topic_title: string;
+  topic_summary: string;
+  idea: object;
+  aspect_ratio: string;
+}) {
+  const res = await api.post("/scenes/generate-one", params, { timeout: 60_000 });
+  return res.data as { description: string; narration: string };
 }
 
 export async function splitScene(params: {
@@ -93,6 +106,7 @@ export async function splitScene(params: {
   description: string;
   narration: string;
   audio_duration: number;
+  aspect_ratio: string;
 }) {
   const res = await api.post("/scenes/split", params);
   return res.data as {
@@ -116,6 +130,27 @@ export async function uploadChartImage(dataUrl: string) {
   return res.data as { image_url: string };
 }
 
+/** Upload a recorded Recharts animation (webm). Backend transcodes to mp4. */
+export async function uploadChartVideo(blob: Blob) {
+  const form = new FormData();
+  // Give it a filename so FastAPI accepts the UploadFile.
+  form.append("file", blob, "chart.webm");
+  const res = await api.post("/image/upload-chart-video", form, {
+    timeout: 60_000,
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data as { video_url: string };
+}
+
+export async function uploadSceneImage(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await api.post("/image/upload", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data as { image_url: string };
+}
+
 export async function generateAudio(text: string, voice: string) {
   const res = await api.post("/audio/generate", { text, voice });
   return res.data as { audio_url: string; duration_sec: number };
@@ -127,6 +162,7 @@ export async function generateMotionVeo(params: {
   prompt?: string;
   description?: string;
   narration?: string;
+  reference_image_url?: string;
 }) {
   const res = await api.post("/video/motion-veo", params, {
     timeout: 600_000,

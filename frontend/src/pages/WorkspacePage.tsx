@@ -6,7 +6,9 @@ import {
   generateAudio,
   generateVideo,
   uploadChartImage,
+  uploadSceneImage,
   splitScene,
+  generateOneScene,
   BACKEND,
 } from "../api/client";
 import type { SceneMode, ChartConfig } from "../types";
@@ -22,7 +24,7 @@ export default function WorkspacePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { state, updateScene, setScenes, setVideoUrl } = useProject();
-  const { scenes, aspectRatio, videoUrl } = state;
+  const { scenes, aspectRatio, videoUrl, topic, idea } = state;
   const isVertical = aspectRatio === "9:16";
 
   const [voice, setVoice] = useState("Kore");
@@ -35,6 +37,12 @@ export default function WorkspacePage() {
   const [sceneModes, setSceneModes] = useState<Record<number, SceneMode>>({});
   const [chartDataUrls, setChartDataUrls] = useState<Record<number, string>>({});
   const [loadingSplit, setLoadingSplit] = useState<Record<number, boolean>>({});
+
+  const [loadingUpload, setLoadingUpload] = useState<Record<number, boolean>>({});
+  const [loadingAddScene, setLoadingAddScene] = useState<Record<number, boolean>>({});
+
+  // Custom delete confirmation dialog state
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
 
   // Error tracking for individual scenes
   const [imgErrors, setImgErrors] = useState<Record<number, string>>({});
@@ -65,13 +73,29 @@ export default function WorkspacePage() {
   };
 
   const handleChartImage = useCallback(
-    async (index: number, dataUrl: string, config: ChartConfig) => {
+    async (index: number, dataUrl: string, config: ChartConfig, videoUrl?: string) => {
       setChartDataUrls((prev) => ({ ...prev, [index]: dataUrl }));
+      // When `videoUrl` is provided we set `motion_url`; the video synthesis pipeline
+      // already prefers motion_url over image_path (see handleGenVideo), so the final
+      // video will use the animated chart clip. If the animation recording failed we
+      // explicitly clear any stale motion_url so the fallback PNG is used.
       try {
         const { image_url } = await uploadChartImage(dataUrl);
-        updateScene(index, { image_url, chartConfig: config, mode: "chart", type: "chart" });
+        updateScene(index, {
+          image_url,
+          chartConfig: config,
+          mode: "chart",
+          type: "chart",
+          motion_url: videoUrl ?? undefined,
+        });
       } catch {
-        updateScene(index, { image_url: dataUrl, chartConfig: config, mode: "chart", type: "chart" });
+        updateScene(index, {
+          image_url: dataUrl,
+          chartConfig: config,
+          mode: "chart",
+          type: "chart",
+          motion_url: videoUrl ?? undefined,
+        });
       }
     },
     [updateScene],
@@ -89,6 +113,7 @@ export default function WorkspacePage() {
         description: scene.description,
         narration: scene.narration,
         audio_duration: dur,
+        aspect_ratio: aspectRatio,
       });
       const subs = data.sub_scenes;
       // Build new scenes array: replace scene[index] with sub-scenes
@@ -117,6 +142,93 @@ export default function WorkspacePage() {
     }
   };
 
+  // Shift keyed-by-index state when a scene is inserted/removed.
+  const remapIndexState = <T,>(
+    obj: Record<number, T>,
+    op: "insert" | "delete",
+    at: number,
+  ): Record<number, T> => {
+    const result: Record<number, T> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      const idx = Number(k);
+      if (op === "delete" && idx === at) continue;
+      const shift = op === "insert" ? (idx > at ? 1 : 0) : (idx > at ? -1 : 0);
+      result[idx + shift] = v;
+    }
+    return result;
+  };
+
+  const handleAddScene = async (afterIndex: number) => {
+    if (loadingAllImg || loadingAllAudio) return;
+    setLoadingAddScene((s) => ({ ...s, [afterIndex]: true }));
+    setError("");
+    try {
+      const prev = scenes[afterIndex];
+      const next = scenes[afterIndex + 1] || null;
+      const result = await generateOneScene({
+        prev_scene: prev
+          ? { description: prev.description, narration: prev.narration }
+          : null,
+        next_scene: next
+          ? { description: next.description, narration: next.narration }
+          : null,
+        topic_title: topic?.title || "",
+        topic_summary: topic?.summary || "",
+        idea: (idea as object) || {},
+        aspect_ratio: aspectRatio,
+      });
+
+      const newScene = {
+        scene_number: 0, // will be renumbered below
+        scene_type: "image",
+        description: result.description,
+        narration: result.narration,
+      } as typeof scenes[number];
+
+      const next2 = [...scenes];
+      next2.splice(afterIndex + 1, 0, newScene);
+      const renumbered = next2.map((s, i) => ({ ...s, scene_number: i + 1 }));
+      setScenes(renumbered);
+
+      // Shift all per-index state maps
+      setSceneModes((m) => remapIndexState(m, "insert", afterIndex));
+      setChartDataUrls((m) => remapIndexState(m, "insert", afterIndex));
+      setLoadingImg((m) => remapIndexState(m, "insert", afterIndex));
+      setLoadingAudio((m) => remapIndexState(m, "insert", afterIndex));
+      setLoadingSplit((m) => remapIndexState(m, "insert", afterIndex));
+      setLoadingUpload((m) => remapIndexState(m, "insert", afterIndex));
+      setImgErrors((m) => remapIndexState(m, "insert", afterIndex));
+      setAudioErrors((m) => remapIndexState(m, "insert", afterIndex));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Add scene failed: ${msg}`);
+    } finally {
+      setLoadingAddScene((s) => ({ ...s, [afterIndex]: false }));
+    }
+  };
+
+  const handleDeleteScene = (index: number) => {
+    if (scenes.length <= 1) return;
+    setDeleteConfirm(index);
+  };
+
+  const confirmDeleteScene = (index: number) => {
+    setDeleteConfirm(null);
+    const next = scenes.filter((_, i) => i !== index);
+    const renumbered = next.map((s, i) => ({ ...s, scene_number: i + 1 }));
+    setScenes(renumbered);
+
+    setSceneModes((m) => remapIndexState(m, "delete", index));
+    setChartDataUrls((m) => remapIndexState(m, "delete", index));
+    setLoadingImg((m) => remapIndexState(m, "delete", index));
+    setLoadingAudio((m) => remapIndexState(m, "delete", index));
+    setLoadingSplit((m) => remapIndexState(m, "delete", index));
+    setLoadingUpload((m) => remapIndexState(m, "delete", index));
+    setLoadingAddScene((m) => remapIndexState(m, "delete", index));
+    setImgErrors((m) => remapIndexState(m, "delete", index));
+    setAudioErrors((m) => remapIndexState(m, "delete", index));
+  };
+
   if (scenes.length === 0) {
     return <Navigate to="/topic" replace />;
   }
@@ -132,6 +244,24 @@ export default function WorkspacePage() {
       setImgErrors((s) => ({ ...s, [index]: msg }));
     } finally {
       setLoadingImg((s) => ({ ...s, [index]: false }));
+    }
+  };
+
+  const handleUploadImage = async (index: number, file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      setImgErrors((s) => ({ ...s, [index]: "File too large (max 5 MB)" }));
+      return;
+    }
+    setLoadingUpload((s) => ({ ...s, [index]: true }));
+    setImgErrors((s) => ({ ...s, [index]: "" }));
+    try {
+      const data = await uploadSceneImage(file);
+      updateScene(index, { image_url: data.image_url, type: "image", mode: "image" });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setImgErrors((s) => ({ ...s, [index]: msg }));
+    } finally {
+      setLoadingUpload((s) => ({ ...s, [index]: false }));
     }
   };
 
@@ -280,6 +410,57 @@ export default function WorkspacePage() {
 
   return (
     <div>
+      {/* ── Custom delete confirmation dialog ── */}
+      {deleteConfirm !== null && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.6)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000,
+        }}
+          onClick={() => setDeleteConfirm(null)}
+        >
+          <div
+            style={{
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              padding: "28px 32px",
+              maxWidth: 380,
+              width: "90%",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 10px", fontSize: 16, fontWeight: 600 }}>
+              Delete Scene {deleteConfirm + 1}?
+            </h3>
+            <p style={{ margin: "0 0 24px", fontSize: 13, color: "var(--text-dim)", lineHeight: 1.5 }}>
+              This scene's audio, image, and motion assets will be removed. This action cannot be undone.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                className="btn btn-secondary"
+                style={{ padding: "8px 20px" }}
+                onClick={() => setDeleteConfirm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn"
+                style={{ padding: "8px 20px", background: "var(--red)", color: "#fff", border: "none" }}
+                onClick={() => confirmDeleteScene(deleteConfirm)}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ marginBottom: 8 }}>
         <button className="btn btn-sm" onClick={() => navigate("/topic")} style={{ background: "var(--bg-input)", color: "var(--text-dim)" }}>&larr; Back to Idea</button>
       </div>
@@ -380,7 +561,57 @@ export default function WorkspacePage() {
           <tbody>
             {scenes.map((scene, i) => (
               <tr key={i}>
-                <td className="num">{scene.scene_number}</td>
+                <td className="num">
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <span>{scene.scene_number}</span>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        type="button"
+                        title="Insert a new scene after this one"
+                        onClick={() => handleAddScene(i)}
+                        disabled={loadingAddScene[i] || loadingAllImg || loadingAllAudio}
+                        style={{
+                          width: 22,
+                          height: 22,
+                          padding: 0,
+                          lineHeight: 1,
+                          fontSize: 14,
+                          fontWeight: 600,
+                          borderRadius: 4,
+                          border: "1px solid var(--border)",
+                          background: "var(--bg-input)",
+                          color: "var(--text)",
+                          cursor: loadingAddScene[i] || loadingAllImg || loadingAllAudio ? "not-allowed" : "pointer",
+                          opacity: loadingAddScene[i] || loadingAllImg || loadingAllAudio ? 0.5 : 1,
+                        }}
+                      >
+                        {loadingAddScene[i] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : "+"}
+                      </button>
+                      {scenes.length > 1 && (
+                        <button
+                          type="button"
+                          title="Delete this scene"
+                          onClick={() => handleDeleteScene(i)}
+                          style={{
+                            width: 22,
+                            height: 22,
+                            padding: 0,
+                            lineHeight: 1,
+                            fontSize: 14,
+                            fontWeight: 600,
+                            borderRadius: 4,
+                            border: "1px solid var(--border)",
+                            background: "var(--bg-input)",
+                            color: "var(--red)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </td>
                 <td>
                   <textarea
                     value={scene.description}
@@ -467,11 +698,11 @@ export default function WorkspacePage() {
                       {imgErrors[i] && (
                         <div style={{ color: "var(--red)", fontSize: 10, marginTop: 4 }}>Failed — retry below</div>
                       )}
-                      <div style={{ marginTop: 8 }}>
+                      <div style={{ marginTop: 8, display: "flex", gap: 6, justifyContent: "center" }}>
                         <button
                           className={`btn btn-sm ${imgErrors[i] ? "btn-primary" : "btn-secondary"}`}
                           onClick={() => handleGenImage(i)}
-                          disabled={loadingImg[i]}
+                          disabled={loadingImg[i] || loadingUpload[i]}
                         >
                           {loadingImg[i] ? (
                             <span className="spinner" />
@@ -483,6 +714,24 @@ export default function WorkspacePage() {
                             "Generate"
                           )}
                         </button>
+                        <label
+                          className="btn btn-sm btn-secondary"
+                          title={isVertical ? "Upload image — 9:16 ratio recommended" : "Upload image — 16:9 ratio recommended"}
+                          style={{ cursor: loadingImg[i] || loadingUpload[i] ? "not-allowed" : "pointer", opacity: loadingImg[i] || loadingUpload[i] ? 0.5 : 1 }}
+                        >
+                          {loadingUpload[i] ? <span className="spinner" /> : "Upload"}
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png"
+                            style={{ display: "none" }}
+                            disabled={loadingImg[i] || loadingUpload[i]}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleUploadImage(i, file);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
                       </div>
                     </>
                   )}
@@ -526,12 +775,19 @@ export default function WorkspacePage() {
                 {/* ── Motion Studio entry ── */}
                 <td style={{ textAlign: "center", verticalAlign: "middle" }}>
                   {scene.motion_url && (
-                    <div style={{ marginBottom: 6 }}>
+                    <div style={{ marginBottom: 6, display: "flex", justifyContent: "center" }}>
+                      {/* Match the project's chosen aspect ratio so the thumbnail
+                          previews the actual frame the user will see. */}
                       <video
                         muted
                         playsInline
                         preload="metadata"
-                        style={{ width: 80, height: 45, objectFit: "cover", borderRadius: 4 }}
+                        style={{
+                          width: isVertical ? 45 : 80,
+                          height: isVertical ? 80 : 45,
+                          objectFit: "cover",
+                          borderRadius: 4,
+                        }}
                         src={BACKEND + scene.motion_url}
                       />
                     </div>

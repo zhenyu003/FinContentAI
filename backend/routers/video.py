@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, model_validator
@@ -35,6 +36,7 @@ class MotionVeoRequest(BaseModel):
     description: str | None = None
     narration: str | None = None
     aspect_ratio: str = "16:9"
+    reference_image_url: str | None = None
 
     def resolved_prompt(self) -> str:
         if self.prompt and self.prompt.strip():
@@ -52,6 +54,15 @@ class MotionVeoRequest(BaseModel):
 async def create_video(request: GenerateVideoRequest):
     try:
         scenes_data = [scene.model_dump(exclude_none=True) for scene in request.scenes]
+        # Diagnostic: dump the per-scene visual type so we can confirm chart scenes
+        # are being threaded through with `video_clip_path` instead of `image_path`.
+        for i, s in enumerate(scenes_data):
+            visual = (
+                f"video_clip_path={s.get('video_clip_path')}"
+                if s.get("video_clip_path")
+                else f"image_path={s.get('image_path')}"
+            )
+            print(f"[/video/generate] scene {i}: {visual}")
         file_path = synthesize_video(
             scenes=scenes_data,
             aspect_ratio=request.aspect_ratio,
@@ -69,8 +80,21 @@ async def create_motion_veo(request: MotionVeoRequest):
     try:
         prompt = request.resolved_prompt()
         ar = request.aspect_ratio
+
+        ref_path: str | None = None
+        if request.reference_image_url:
+            # Strip leading slash and resolve relative to backend CWD.
+            rel_ref = request.reference_image_url.lstrip("/")
+            if not os.path.exists(rel_ref):
+                raise ValueError(f"Reference image not found: {request.reference_image_url}")
+            ref_path = rel_ref
+
         rel = await asyncio.to_thread(
-            lambda: generate_motion_video(prompt, aspect_ratio=ar),
+            lambda: generate_motion_video(
+                prompt,
+                aspect_ratio=ar,
+                reference_image_path=ref_path,
+            ),
         )
         url = "/" + rel.replace("\\", "/")
         return {"video_url": url}

@@ -55,7 +55,12 @@ def _sanitize_for_veo(text: str) -> str:
 
 
 def build_veo_prompt(scene: dict) -> str:
-    """Combine scene fields with cinematic instructions for Veo."""
+    """Combine scene fields with cinematic instructions for Veo.
+
+    Note: orientation guidance is added later in `generate_motion_video`
+    based on `aspect_ratio` so it applies to both this wrapper and to
+    raw shot prompts coming from the multi-shot pipeline.
+    """
     description = (scene.get("description") or "").strip()
     narration = (scene.get("narration") or "").strip()
     parts = [
@@ -72,6 +77,38 @@ def build_veo_prompt(scene: dict) -> str:
     return _sanitize_for_veo("\n".join(parts).strip())
 
 
+def _orientation_directive(aspect_ratio: str) -> str:
+    """Strong, explicit orientation instruction prepended to every Veo prompt.
+
+    Veo's `aspect_ratio` config field controls the output canvas, but the
+    model still composes the SCENE based on the text prompt — so without an
+    explicit orientation directive it tends to plan horizontally and end up
+    rendering subjects sideways in a 9:16 canvas. Repeating the constraint
+    in the prompt itself fixes this.
+    """
+    if aspect_ratio == "9:16":
+        return (
+            "OUTPUT FORMAT: 9:16 VERTICAL / PORTRAIT video (mobile / TikTok / Reels / Shorts).\n"
+            "Compose the entire scene for a TALL vertical frame: subjects MUST be oriented "
+            "upright (head at top, feet at bottom), framed head-to-toe vertically. "
+            "Camera in portrait orientation. The longest dimension of every subject "
+            "(a standing person, a building, a tree) MUST align with the vertical axis.\n"
+            "Strictly forbidden: groups of 3+ people side-by-side, wide horizon panoramas, "
+            "conference tables shot from the side, any composition wider than tall — "
+            "those will render rotated/sideways in a 9:16 canvas.\n"
+            "ONE CONTINUOUS SHOT for the full 8 seconds. NO cuts, NO scene transitions, "
+            "NO jumping to a different angle or different subject mid-clip. The camera "
+            "may pan, tilt, dolly, or push-in smoothly, but it stays on the SAME subject "
+            "and the SAME framing logic from frame 0 to frame 240.\n\n"
+        )
+    return (
+        "OUTPUT FORMAT: 16:9 HORIZONTAL / LANDSCAPE widescreen video. "
+        "Compose for a wide cinematic frame.\n"
+        "ONE CONTINUOUS SHOT for the full 8 seconds. NO cuts, NO scene transitions, "
+        "NO jumping to a different angle mid-clip.\n\n"
+    )
+
+
 class RateLimitError(Exception):
     """Raised when the Veo API returns 429 RESOURCE_EXHAUSTED."""
     pass
@@ -81,14 +118,32 @@ _VEO_MAX_RETRIES = 4
 _VEO_BASE_DELAY = 30  # seconds — Veo rate limits need longer waits
 
 
+def _load_reference_image(path: str) -> types.Image:
+    """Load a local image file into a types.Image for Veo image-to-video."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".jpg", ".jpeg"):
+        mime = "image/jpeg"
+    elif ext == ".png":
+        mime = "image/png"
+    else:
+        raise ValueError(f"Unsupported reference image type: {ext}")
+    with open(path, "rb") as f:
+        data = f.read()
+    return types.Image(image_bytes=data, mime_type=mime)
+
+
 def generate_motion_video(
     prompt: str,
     *,
     aspect_ratio: str = "16:9",
+    reference_image_path: str | None = None,
 ) -> str:
     """
     Generate one MP4 via Veo, poll until complete, save under assets/video/motions/.
     Retries automatically on 429 rate-limit errors with exponential backoff.
+
+    If `reference_image_path` is provided, uses Veo's image-to-video mode
+    (the image becomes the first frame / anchor).
 
     Returns:
         Relative path like assets/video/motions/<id>.mp4
@@ -100,13 +155,27 @@ def generate_motion_video(
     if aspect_ratio not in ("16:9", "9:16"):
         aspect_ratio = "16:9"
 
+    # Prepend a strong orientation directive so Veo composes the SCENE for
+    # the correct aspect ratio (the config field alone only sets the output
+    # canvas; without prompt-level guidance the model often plans
+    # horizontally and the result looks rotated in a 9:16 canvas).
+    text = _orientation_directive(aspect_ratio) + text
+
     os.makedirs(MOTIONS_DIR, exist_ok=True)
     client = get_gemini_client()
+
+    reference_image = None
+    if reference_image_path:
+        if not os.path.exists(reference_image_path):
+            raise FileNotFoundError(
+                f"Reference image not found: {reference_image_path}"
+            )
+        reference_image = _load_reference_image(reference_image_path)
 
     operation = None
     for attempt in range(_VEO_MAX_RETRIES):
         try:
-            operation = client.models.generate_videos(
+            kwargs = dict(
                 model=VEO_MODEL,
                 prompt=text,
                 config=types.GenerateVideosConfig(
@@ -117,6 +186,9 @@ def generate_motion_video(
                     number_of_videos=1,
                 ),
             )
+            if reference_image is not None:
+                kwargs["image"] = reference_image
+            operation = client.models.generate_videos(**kwargs)
             break  # success — move to polling
         except Exception as e:
             err_str = str(e)

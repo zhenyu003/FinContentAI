@@ -4,6 +4,41 @@ from math import floor
 from services.utils import call_llm, parse_json_response
 
 
+def _scene_composition_guidance(aspect_ratio: str) -> str:
+    """Return aspect-ratio-aware composition guidance to inject into any
+    scene-writing LLM prompt that produces a `description` field.
+
+    The same `description` text feeds (a) AI image generation and (b) Veo
+    motion generation. If the description describes content that only fits
+    horizontally (e.g. "5-7 leaders side-by-side around a table"), neither
+    a vertical AI image nor a vertical Veo clip can render it correctly —
+    the visuals end up sideways or awkwardly cropped. Pushing the
+    constraint upstream to the scene-writer is the only reliable fix.
+    """
+    if aspect_ratio == "9:16":
+        return (
+            "ASPECT RATIO: 9:16 vertical / portrait (mobile, TikTok / Reels / Shorts).\n"
+            "Every scene `description` MUST describe a visual that natively fits a TALL "
+            "PORTRAIT frame. This is a hard constraint on the SUBJECT MATTER, not just on "
+            "camera framing:\n"
+            "  PREFER: one subject framed head-to-toe; a single person close-up; two "
+            "people facing each other in profile; a tall object (skyscraper, tree, glass "
+            "of liquid being filled); top-down hands-on-desk shots; vertical text/numbers "
+            "stacked; a single phone or screen held upright.\n"
+            "  AVOID: groups of 3+ people side-by-side; wide establishing shots of a "
+            "room/landscape/skyline; panoramic horizons; conference tables shot from the "
+            "side; trading floors; any composition that is wider than tall.\n"
+            "If the natural visual for the narration is a wide group, REDUCE to one or "
+            "two representative subjects shot vertically. Keep the storytelling power but "
+            "pick a portrait-friendly framing."
+        )
+    return (
+        "ASPECT RATIO: 16:9 horizontal / landscape (widescreen). Each scene "
+        "`description` should describe a visual suitable for a wide cinematic frame "
+        "(subjects arranged across the width, wide establishing shots, horizon visible)."
+    )
+
+
 def recommend_template(topic_title: str, topic_summary: str, templates: list[str]) -> dict:
     """Pick the single best narrative template for a topic. Returns {template, reason}."""
     system = "You are a content-strategy expert. Given a financial topic, pick the ONE best narrative template from the list. Reply with JSON only: {\"template\": \"<exact name>\", \"reason\": \"<one sentence why>\"}"
@@ -216,10 +251,20 @@ def generate_scenes(
     duration: str,
     narrative_template: str,
     knowledge_context: str = "",
+    aspect_ratio: str = "16:9",
 ) -> dict:
-    """Generate scene breakdown for the video."""
-    system_prompt = """You are an expert financial video scriptwriter.
+    """Generate scene breakdown for the video.
+
+    `aspect_ratio` is forwarded into the LLM prompt so descriptions are
+    written for the correct orientation from the start (a vertical project
+    will get descriptions of subjects that natively fit a 9:16 frame).
+    """
+    composition_guidance = _scene_composition_guidance(aspect_ratio)
+    system_prompt = f"""You are an expert financial video scriptwriter.
 You create detailed scene breakdowns with image prompts and narration text.
+
+{composition_guidance}
+
 Always respond with valid JSON only, no other text."""
 
     # TTS speaks ~2 words/sec (≈120 WPM). Budget total words accordingly.
@@ -273,7 +318,7 @@ Duration guidelines (TTS audio speed ≈ 2 words per second):
 For each scene, provide:
 - scene_number: sequential number
 - scene_type: "image" (always use "image" for now)
-- description: A detailed image prompt in English that describes the visual for this scene. This will be used to generate an AI image, so be specific about composition, style, and mood.
+- description: A detailed image prompt in English that describes the visual for this scene. This will be used to generate an AI image AND an AI motion video, so be specific about composition, style, and mood. CRITICAL — follow the ASPECT RATIO composition rules above for the visual you describe.
 - narration: The voiceover text for this scene (aim for {duration_config['per_scene']} words).
 
 Return JSON with this exact format:
@@ -368,12 +413,90 @@ Return JSON with this exact format:
     return parse_json_response(response_text)
 
 
+def generate_single_scene(
+    prev_scene: dict | None,
+    next_scene: dict | None,
+    topic_title: str,
+    topic_summary: str,
+    idea: dict,
+    aspect_ratio: str = "16:9",
+) -> dict:
+    """Generate ONE new scene to insert between two existing scenes (or after the last one).
+
+    If next_scene is None, generate a concluding / wrap-up scene.
+    Returns {"description": ..., "narration": ...}.
+    """
+    composition_guidance = _scene_composition_guidance(aspect_ratio)
+    system_prompt = (
+        "You are an expert financial video scriptwriter. "
+        "You write ONE scene that slots between two existing scenes, matching their "
+        "tone, vocabulary, and length.\n\n"
+        f"{composition_guidance}\n\n"
+        "Always respond with valid JSON only — no markdown fences, no other text."
+    )
+
+    prev_block = ""
+    if prev_scene:
+        prev_block = (
+            f"PREVIOUS SCENE:\n"
+            f"  description: {prev_scene.get('description', '')}\n"
+            f"  narration: {prev_scene.get('narration', '')}\n\n"
+        )
+
+    if next_scene:
+        next_block = (
+            f"NEXT SCENE:\n"
+            f"  description: {next_scene.get('description', '')}\n"
+            f"  narration: {next_scene.get('narration', '')}\n\n"
+        )
+        task = (
+            "Write ONE bridging scene that connects the previous scene to the next "
+            "scene. It should transition smoothly — pick up the idea from the previous "
+            "narration and set up what the next scene delivers."
+        )
+    else:
+        next_block = "NEXT SCENE: (none — this will be the final scene)\n\n"
+        task = (
+            "Write ONE concluding/wrap-up scene that follows the previous scene. "
+            "Summarize the key takeaway and close the video with a clear final beat "
+            "or call to reflection."
+        )
+
+    user_prompt = f"""Topic: {topic_title}
+Summary: {topic_summary}
+Content Idea: {json.dumps(idea)}
+
+{prev_block}{next_block}Task: {task}
+
+Constraints:
+- Match the tone and vocabulary of the surrounding narration.
+- Narration length: ~45-60 words (≈ 2 words/sec TTS, so 22-30 seconds of audio).
+- Description must be a detailed English image prompt (composition, style, mood) suitable for AI image generation AND AI motion video.
+- ASPECT RATIO ({aspect_ratio}): the description MUST follow the composition rules in the system prompt — pick subjects that natively fit a {"tall portrait" if aspect_ratio == "9:16" else "wide landscape"} frame.
+
+Return JSON with exactly this shape:
+{{
+  "description": "Detailed image prompt in English",
+  "narration": "Voiceover narration text"
+}}"""
+
+    raw = call_llm(system_prompt, user_prompt)
+    parsed = parse_json_response(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("Expected JSON object for single scene")
+    return {
+        "description": str(parsed.get("description", "")).strip(),
+        "narration": str(parsed.get("narration", "")).strip(),
+    }
+
+
 def split_long_scene(
     scene_number: int,
     description: str,
     narration: str,
     audio_duration: float,
     max_chart_duration: float = 12.0,
+    aspect_ratio: str = "16:9",
 ) -> list[dict]:
     """Split a long scene into sub-scenes, keeping chart-relevant narration short.
 
@@ -382,13 +505,15 @@ def split_long_scene(
     The sub-scene marked is_chart=True contains only the data-focused narration
     and should be ≤ max_chart_duration seconds.
     """
+    composition_guidance = _scene_composition_guidance(aspect_ratio)
     system_prompt = (
         "You are a video scriptwriter. A scene's narration is too long for a chart visual. "
         "Split it into 2-3 shorter sub-scenes. Exactly ONE sub-scene should contain "
         "the data/chart-relevant narration (numbers, comparisons, statistics) — mark it "
         'is_chart: true. Other sub-scenes provide context and should use regular images.\n'
         "The chart sub-scene narration should be concise (under 30 words ideally) "
-        "so it fits ~8-12 seconds of audio.\n"
+        "so it fits ~8-12 seconds of audio.\n\n"
+        f"{composition_guidance}\n\n"
         "Return valid JSON only — no markdown fences."
     )
 
@@ -474,9 +599,49 @@ def split_scene_to_shots(
         total_shots = max(num_full, 1)
         has_freeze_tail = remainder > 0
 
+    is_vertical = aspect_ratio == "9:16"
+    orientation_label = "9:16 vertical / portrait (mobile, TikTok / Reels / Shorts)" if is_vertical else "16:9 horizontal / landscape (widescreen)"
+
+    if is_vertical:
+        composition_rule = (
+            "EVERY prompt MUST be designed for a TALL 9:16 PORTRAIT frame. "
+            "This is a HARD constraint on SUBJECT MATTER, not just on camera angle:\n"
+            "  ALLOWED subjects (fit vertically): one standing person framed head-to-toe; "
+            "one person in close-up (forehead to chest); two people facing each other "
+            "in profile; a single tall object (skyscraper, tree, glass of liquid being "
+            "filled); a top-down shot of hands on a desk; an overhead-to-eye-level tilt; "
+            "vertical text/numbers stacked; a single phone or screen held upright.\n"
+            "  FORBIDDEN subjects (only fit horizontally — Veo will render them sideways): "
+            "groups of 3+ people standing or sitting side-by-side; wide establishing shots "
+            "of a room/landscape/skyline; panoramic horizons; conference tables shot from "
+            "the side; any phrase containing 'wide shot', 'group of N people', 'lineup', "
+            "'panoramic', 'across the room', 'side by side'.\n"
+            "If the scene description mentions a group of people, REDUCE to one or two "
+            "subjects and frame them vertically (e.g. 'one executive in a tailored suit, "
+            "framed from head to waist, slight low angle')."
+        )
+        single_shot_rule = (
+            "ONE CONTINUOUS SHOT, NO CUTS. Each prompt is a single uninterrupted 8-second "
+            "take — no scene transitions, no jump cuts, no 'then the camera switches to'. "
+            "Veo will literally cut to a different scene if the prompt implies one."
+        )
+    else:
+        composition_rule = (
+            "EVERY prompt should describe a HORIZONTAL/LANDSCAPE composition suitable "
+            "for a wide 16:9 frame (subjects arranged across the width, wide "
+            "establishing shots, horizon visible)."
+        )
+        single_shot_rule = (
+            "ONE CONTINUOUS SHOT, NO CUTS. Each prompt is a single uninterrupted 8-second "
+            "take — no scene transitions or jump cuts inside one shot."
+        )
+
     system_prompt = (
         "You are a cinematographer planning shots for an AI-generated video "
         "(Google Veo). Each shot is approximately 8 seconds of footage. "
+        f"Output orientation: {orientation_label}.\n\n"
+        f"COMPOSITION RULE: {composition_rule}\n\n"
+        f"SHOT-INTEGRITY RULE: {single_shot_rule}\n\n"
         "You must output valid JSON only -- no markdown fences, no other text."
     )
 
@@ -485,7 +650,7 @@ def split_scene_to_shots(
 Scene description: {scene_description}
 Narration: {narration}
 Total audio duration: {audio_duration:.1f}s
-Aspect ratio: {aspect_ratio}
+Aspect ratio: {aspect_ratio} ({orientation_label})
 
 Requirements:
 - Each shot is ~8 seconds of AI-generated video via Veo.
@@ -493,16 +658,19 @@ Requirements:
 - Ensure continuity between shots: same setting, consistent lighting, progressive camera movement.
 - Each visual prompt should describe: camera angle, camera movement, subject/action, mood/lighting.
 - Prompts should be vivid and specific enough for an AI video model.
+- COMPOSITION (critical, hard rule): {composition_rule}
+- SHOT INTEGRITY (critical): {single_shot_rule}
 
 Return a JSON array of objects with exactly these keys:
   "shot_index" (integer starting at 1)
   "visual_prompt" (string - the detailed visual prompt for Veo)
 
-Example format:
-[
-  {{"shot_index": 1, "visual_prompt": "Wide establishing shot, slow dolly forward..."}},
-  {{"shot_index": 2, "visual_prompt": "Medium close-up, gentle pan right..."}}
-]"""
+Example format ({"vertical" if is_vertical else "horizontal"}):
+{(
+  '[{"shot_index": 1, "visual_prompt": "Vertical 9:16 close-up of one Asian female executive in a navy blazer, framed from forehead to chest, soft window light from the right, she looks directly into the lens, subtle slow push-in for the full 8 seconds, single continuous take, no cuts. Background: soft-focus modern office interior."}, {"shot_index": 2, "visual_prompt": "Vertical 9:16 medium shot, one businessman standing upright in front of a tall floor-to-ceiling window, framed head-to-toe, camera slowly cranes up from waist to eye level, single continuous take."}]'
+  if is_vertical else
+  '[{"shot_index": 1, "visual_prompt": "Wide establishing shot, slow dolly forward..."}, {"shot_index": 2, "visual_prompt": "Medium close-up, gentle pan right..."}]'
+)}"""
 
     raw = call_llm(system_prompt, user_prompt)
     parsed = parse_json_response(raw)

@@ -110,6 +110,7 @@ export default function TopicPage() {
         qa_answers: answers,
         duration,
         narrative_template: idea!.narrative_template,
+        aspect_ratio: aspectRatio,
       });
       if (data.knowledge_used) setScenesKnowledgeUsed(true);
       setScenes(data.scenes || []);

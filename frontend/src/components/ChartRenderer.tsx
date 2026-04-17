@@ -21,10 +21,12 @@ interface Props {
   config: ChartConfig;
   width?: number;
   height?: number;
+  /** If true, Recharts plays its draw-in animation. Default false (snapshot-safe). */
+  animate?: boolean;
 }
 
 const ChartRenderer = forwardRef<HTMLDivElement, Props>(
-  ({ config, width = 480, height = 280 }, ref) => {
+  ({ config, width = 480, height = 280, animate = false }, ref) => {
     const { chartType, labels, series, title, xAxisLabel, yAxisLabel, source } = config;
 
     const axisStyle = { fill: "#8b8fa7", fontSize: 11 };
@@ -92,6 +94,9 @@ const ChartRenderer = forwardRef<HTMLDivElement, Props>(
                   paddingAngle={2}
                   dataKey="value"
                   stroke="none"
+                  isAnimationActive={animate}
+                  animationDuration={1500}
+                  animationEasing="ease-out"
                   label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                   labelLine={{ stroke: "#5a5f7a", strokeWidth: 1 }}
                 >
@@ -174,6 +179,9 @@ const ChartRenderer = forwardRef<HTMLDivElement, Props>(
                     fill={PALETTE[idx % PALETTE.length]}
                     opacity={s.style === "volatile" ? 0.65 : 0.9}
                     radius={[3, 3, 0, 0]}
+                    isAnimationActive={animate}
+                    animationDuration={1500}
+                    animationEasing="ease-out"
                   />
                 ))}
               </BarChart>
@@ -217,6 +225,9 @@ const ChartRenderer = forwardRef<HTMLDivElement, Props>(
                   strokeDasharray={s.style === "volatile" ? "6 3" : undefined}
                   dot={false}
                   activeDot={{ r: 4 }}
+                  isAnimationActive={animate}
+                  animationDuration={1500}
+                  animationEasing="ease-out"
                 />
               ))}
             </LineChart>

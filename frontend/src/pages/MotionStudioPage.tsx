@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 import { useProject } from "../App";
 import {
   splitSceneToShots,
   generateMotionVeo,
   stitchMotionShots,
+  generateImage,
+  uploadSceneImage,
   BACKEND,
 } from "../api/client";
 import type { ShotData } from "../types";
@@ -20,6 +22,10 @@ export default function MotionStudioPage() {
 
   // Restore shots from scene state if available
   const [shots, setShots] = useState<ShotData[]>(scene?.shots ?? []);
+  // Ref mirrors the latest `shots` synchronously so overlapping async handlers
+  // don't overwrite each other with a stale closure snapshot.
+  const shotsRef = useRef<ShotData[]>(shots);
+  shotsRef.current = shots;
   const [loadingSplit, setLoadingSplit] = useState(false);
   const [loadingMotion, setLoadingMotion] = useState<Record<number, boolean>>({});
   const [loadingAllMotion, setLoadingAllMotion] = useState(false);
@@ -28,13 +34,22 @@ export default function MotionStudioPage() {
   const [stitchedUrl, setStitchedUrl] = useState<string | null>(scene?.motion_url || null);
   const [error, setError] = useState("");
 
+  // Reference image (image-to-video) state
+  const [singleShotImage, setSingleShotImage] = useState<string | undefined>(undefined);
+  const [loadingRefGen, setLoadingRefGen] = useState<Record<number | "single", boolean>>({});
+  const [loadingRefUpload, setLoadingRefUpload] = useState<Record<number | "single", boolean>>({});
+
   // Guard: need valid scene with audio
   if (!scene || !scene.audio_url) {
     return <Navigate to="/workspace" replace />;
   }
 
   const duration = scene.audio_duration ?? 0;
-  const isSingleShot = duration <= 8;
+  // Matches the backend's split_scene_to_shots logic: a single ~8s Veo clip
+  // plus up to ~2s of freeze-tail covers anything ≤ 10s in one shot, so we
+  // skip the "Split into Shots" step entirely and go straight to the
+  // single-shot work area.
+  const isSingleShot = duration <= 10;
 
   const formatDuration = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -42,8 +57,10 @@ export default function MotionStudioPage() {
     return m > 0 ? `${m}m ${s}s` : `${s}s`;
   };
 
-  // Persist shots to scene state whenever they change
+  // Persist shots to scene state whenever they change.
+  // Update ref eagerly so any in-flight async handler sees the latest value.
   const updateShots = (newShots: ShotData[]) => {
+    shotsRef.current = newShots;
     setShots(newShots);
     updateScene(idx, { shots: newShots });
   };
@@ -74,13 +91,16 @@ export default function MotionStudioPage() {
     setLoadingMotion((s) => ({ ...s, [shotIdx]: true }));
     setError("");
     try {
-      const shot = shots[shotIdx];
+      const shot = shotsRef.current[shotIdx];
       const data = await generateMotionVeo({
         description: shot.visual_prompt,
         narration: scene.narration,
         aspect_ratio: aspectRatio,
+        reference_image_url: shot.reference_image_url,
       });
-      const newShots = shots.map((s, i) =>
+      // Read from ref — any concurrent handler that completed meanwhile has
+      // already updated shotsRef.current, so we don't drop its changes.
+      const newShots = shotsRef.current.map((s, i) =>
         i === shotIdx ? { ...s, motion_url: data.video_url } : s
       );
       updateShots(newShots);
@@ -123,7 +143,7 @@ export default function MotionStudioPage() {
   const handleGenAllMotion = async () => {
     setLoadingAllMotion(true);
     setError("");
-    let currentShots = [...shots];
+    let currentShots = [...shotsRef.current];
     let generated = 0;
 
     const genOne = async (i: number): Promise<boolean> => {
@@ -134,6 +154,7 @@ export default function MotionStudioPage() {
           description: shot.visual_prompt,
           narration: scene.narration,
           aspect_ratio: aspectRatio,
+          reference_image_url: shot.reference_image_url,
         });
         currentShots = currentShots.map((s, j) =>
           j === i ? { ...s, motion_url: data.video_url } : s
@@ -227,6 +248,7 @@ export default function MotionStudioPage() {
         description: scene.description,
         narration: scene.narration,
         aspect_ratio: aspectRatio,
+        reference_image_url: singleShotImage,
       });
       setStitchedUrl(data.video_url);
     } catch (e: unknown) {
@@ -234,6 +256,161 @@ export default function MotionStudioPage() {
     } finally {
       setLoadingDirect(false);
     }
+  };
+
+  // ── Reference image (image-to-video) handlers ──
+  const setShotRefImage = (shotIdx: number, url: string | undefined) => {
+    const newShots = shotsRef.current.map((s, i) =>
+      i === shotIdx ? { ...s, reference_image_url: url } : s
+    );
+    updateShots(newShots);
+  };
+
+  const handleRefImageGen = async (shotIdx: number | "single") => {
+    setLoadingRefGen((s) => ({ ...s, [shotIdx]: true }));
+    setError("");
+    try {
+      const prompt =
+        shotIdx === "single" ? scene.description : shotsRef.current[shotIdx].visual_prompt;
+      const data = await generateImage(prompt, aspectRatio);
+      if (shotIdx === "single") setSingleShotImage(data.image_url);
+      else setShotRefImage(shotIdx, data.image_url);
+    } catch (e: unknown) {
+      setError("Reference image generation failed: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoadingRefGen((s) => ({ ...s, [shotIdx]: false }));
+    }
+  };
+
+  const handleRefImageUpload = async (shotIdx: number | "single", file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      setError("File too large (max 5 MB)");
+      return;
+    }
+    setLoadingRefUpload((s) => ({ ...s, [shotIdx]: true }));
+    setError("");
+    try {
+      const data = await uploadSceneImage(file);
+      if (shotIdx === "single") setSingleShotImage(data.image_url);
+      else setShotRefImage(shotIdx, data.image_url);
+    } catch (e: unknown) {
+      setError("Upload failed: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoadingRefUpload((s) => ({ ...s, [shotIdx]: false }));
+    }
+  };
+
+  const handleRefImageRemove = (shotIdx: number | "single") => {
+    if (shotIdx === "single") setSingleShotImage(undefined);
+    else setShotRefImage(shotIdx, undefined);
+  };
+
+  // Compact per-shot (or single-shot) reference-image zone.
+  const renderRefImageZone = (key: number | "single", imageUrl?: string) => {
+    const busy = !!loadingRefGen[key] || !!loadingRefUpload[key];
+    return (
+      <div
+        style={{
+          border: "1px dashed var(--border)",
+          borderRadius: 6,
+          padding: 8,
+          marginBottom: 8,
+          background: "var(--bg-input)",
+          fontSize: 11,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+          <span style={{ fontWeight: 600 }}>🖼 Reference image</span>
+          <span className="text-dim" style={{ fontSize: 10 }}>(optional anchor)</span>
+        </div>
+        {imageUrl ? (
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            {/* Image fills available width at the correct video aspect ratio */}
+            <img
+              src={imageUrl.startsWith("data:") ? imageUrl : BACKEND + imageUrl}
+              alt="reference"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                width: "100%",
+                aspectRatio: aspectRatio === "9:16" ? "9/16" : "16/9",
+                objectFit: "cover",
+                borderRadius: 6,
+              }}
+            />
+            {/* Buttons column — fixed width on the right.
+                NOTE: `.btn` uses `display: inline-flex` with default `justify-content: flex-start`,
+                so text-align alone does not center the label — we must set `justifyContent: center`
+                explicitly on the flex container. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0, width: 72, paddingTop: 2 }}>
+              <button
+                className="btn btn-sm btn-secondary"
+                style={{ fontSize: 11, padding: "6px 0", width: "100%", justifyContent: "center", textAlign: "center", gap: 0 }}
+                onClick={() => handleRefImageGen(key)}
+                disabled={busy}
+              >
+                {loadingRefGen[key] ? <span className="spinner" style={{ width: 11, height: 11 }} /> : "Regen"}
+              </button>
+              <label
+                className="btn btn-sm btn-secondary"
+                title={aspectRatio === "9:16" ? "Upload image — 9:16 ratio recommended" : "Upload image — 16:9 ratio recommended"}
+                style={{ fontSize: 11, padding: "6px 0", width: "100%", justifyContent: "center", textAlign: "center", gap: 0, cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.5 : 1 }}
+              >
+                {loadingRefUpload[key] ? <span className="spinner" style={{ width: 11, height: 11 }} /> : "Upload"}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  style={{ display: "none" }}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleRefImageUpload(key, file);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              <button
+                className="btn btn-sm"
+                style={{ fontSize: 11, padding: "6px 0", width: "100%", justifyContent: "center", textAlign: "center", gap: 0, background: "var(--bg-card)", color: "var(--red)", border: "1px solid var(--border)" }}
+                onClick={() => handleRefImageRemove(key)}
+                disabled={busy}
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              className="btn btn-sm btn-secondary"
+              style={{ fontSize: 10, padding: "4px 8px", flex: 1 }}
+              onClick={() => handleRefImageGen(key)}
+              disabled={busy}
+            >
+              {loadingRefGen[key] ? <><span className="spinner" style={{ width: 10, height: 10 }} /> AI...</> : "AI Generate"}
+            </button>
+            <label
+              className="btn btn-sm btn-secondary"
+              title={aspectRatio === "9:16" ? "Upload image — 9:16 ratio recommended" : "Upload image — 16:9 ratio recommended"}
+              style={{ fontSize: 10, padding: "4px 8px", flex: 1, textAlign: "center", cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.5 : 1 }}
+            >
+              {loadingRefUpload[key] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : "Upload"}
+              <input
+                type="file"
+                accept="image/jpeg,image/png"
+                style={{ display: "none" }}
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleRefImageUpload(key, file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+        )}
+      </div>
+    );
   };
 
   // ── Save & go back ──
@@ -304,6 +481,9 @@ export default function MotionStudioPage() {
             <p className="text-dim text-sm" style={{ marginBottom: 16 }}>
               This scene is {formatDuration(duration)} — a single motion clip is all you need.
             </p>
+            <div style={{ maxWidth: 320, margin: "0 auto 12px" }}>
+              {renderRefImageZone("single", singleShotImage)}
+            </div>
             {stitchedUrl ? (
               <>
                 <video
@@ -411,6 +591,9 @@ export default function MotionStudioPage() {
                     <p className="text-dim" style={{ fontSize: 11, lineHeight: 1.4, marginBottom: 8, maxHeight: 48, overflow: "hidden" }}>
                       {shot.visual_prompt}
                     </p>
+
+                    {/* Reference image zone (optional image-to-video anchor) */}
+                    {renderRefImageZone(si, shot.reference_image_url)}
 
                     {/* Motion preview or placeholder */}
                     <div style={{
