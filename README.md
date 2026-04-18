@@ -7,12 +7,14 @@ AI-Powered Financial Content Production Platform — from trending topic discove
 FinContent AI is a full-stack application that automates the creation of financial video content and social media posts. The workflow:
 
 1. **Topic Discovery** — AI researches trending financial topics using real-time data
-2. **Idea & Opinion** — Generates content angles with narrative templates; user adds their unique perspective
-3. **Asset Workstation** — Generates visuals (AI images, data charts, motion video clips), narration audio (TTS), and assembles everything per scene
-4. **Motion Studio** — Optional: generates short video clips per scene using Google Veo, with shot-level control and timeline editing
+2. **Idea & Opinion** — Generates content angles with **preset or custom narrative templates** (AI-generated beats from your description); user adds their unique perspective
+3. **Asset Workstation** — Generates visuals (AI images, **animated data charts**, **Motion Studio clips**), narration audio (**Google TTS or ElevenLabs**, including **cloned voices**), and assembles everything per scene
+4. **Motion Studio** — Optional: generates short video clips per scene using **Google Veo 3.1 Lite**, with shot-level control and stitching
 5. **Video Synthesis** — Concatenates all scenes, burns word-level subtitles (via forced alignment), and exports the final video
 6. **Preview & Export** — Video preview with YouTube metadata generation (titles, description, thumbnail)
 7. **Social Post Branch** — Separate flow to generate platform-specific text posts (LinkedIn, Instagram, X) with AI-generated images
+
+**Account page** — User profile, **saved narrative templates**, **voice clones** (ElevenLabs), credits reference, and plans.
 
 ## Tech Stack
 
@@ -20,11 +22,12 @@ FinContent AI is a full-stack application that automates the creation of financi
 |-------|-----------|
 | Frontend | React 19 + TypeScript, Vite, Recharts, React Router |
 | Backend | FastAPI (Python 3.11+), Uvicorn |
-| AI Models | Google Gemini 2.5 (text), Google Imagen 3 (images), Google Veo (video), Google TTS |
-| Subtitles | stable-ts forced alignment (Whisper-based) + FFmpeg drawtext |
-| Video | FFmpeg (libx264, AAC, zoompan, drawtext) |
+| AI — Google | Gemini (text), **Imagen** (images), **Veo 3.1 Lite** (`veo-3.1-lite-generate-preview`) for Motion, Gemini TTS for default narration |
+| AI — Optional | **ElevenLabs** — Instant Voice Clone (IVC) + TTS (**Flash v2.5**) when a clone is selected |
+| Subtitles | stable-ts forced alignment (Whisper-based) + FFmpeg / libass |
+| Video | FFmpeg (libx264, AAC, zoompan, concat, chart upload transcode) |
 | Auth & DB | Supabase (PostgreSQL + Auth + Row Level Security) |
-| Charts | Recharts (rendered in-browser, captured via html2canvas) |
+| Charts | Recharts (in-browser); optional **recorded animation** (WebM → MP4) for final video |
 
 ## Project Structure
 
@@ -32,61 +35,37 @@ FinContent AI is a full-stack application that automates the creation of financi
 .
 ├── backend/
 │   ├── main.py                 # FastAPI app entry point
-│   ├── requirements.txt        # Python dependencies
-│   ├── routers/                # API route handlers
-│   │   ├── topics.py           # Trending topic research
-│   │   ├── idea.py             # Content idea generation
-│   │   ├── opinion.py          # Q&A for user opinion injection
-│   │   ├── scenes.py           # Scene breakdown & splitting
-│   │   ├── image.py            # AI image generation (Imagen 3)
-│   │   ├── audio.py            # Text-to-speech (Google TTS)
-│   │   ├── video.py            # Video synthesis (FFmpeg)
-│   │   ├── motion.py           # Motion Studio (Veo video gen)
-│   │   ├── metadata.py         # YouTube title/description/thumbnail
-│   │   ├── social.py           # Social post generation
-│   │   ├── template.py         # Narrative templates
-│   │   ├── knowledge.py        # Knowledge base (RAG)
-│   │   ├── auth.py             # Authentication
-│   │   ├── profile.py          # User profiles
-│   │   ├── credits.py          # Usage credits
-│   │   └── admin.py            # Admin endpoints
-│   ├── services/               # Core business logic
-│   │   ├── gemini.py           # Gemini API wrapper
-│   │   ├── dalle.py            # Image generation (Imagen 3)
-│   │   ├── tts.py              # Google Cloud TTS
-│   │   ├── veo.py              # Google Veo video generation
-│   │   ├── ffmpeg.py           # Video synthesis & subtitle burning
-│   │   ├── whisper_align.py    # Word-level forced alignment (stable-ts)
-│   │   ├── claude.py           # Claude API (narrative generation)
-│   │   ├── social_post.py      # Social post content generation
-│   │   ├── knowledge.py        # Knowledge base service
-│   │   ├── supabase_client.py  # Supabase client setup
+│   ├── requirements.txt
+│   ├── migrations/             # Supabase SQL — run in order in SQL Editor
+│   │   ├── 001_init.sql
+│   │   ├── 002_narrative_templates.sql
+│   │   └── 003_voice_clones.sql
+│   ├── routers/
+│   │   ├── topics.py, idea.py, opinion.py, scenes.py
+│   │   ├── image.py            # Imagen + chart/chart-video upload
+│   │   ├── audio.py            # TTS (Gemini / ElevenLabs clone)
+│   │   ├── video.py            # Final synthesis + motion-veo route
+│   │   ├── motion.py           # Motion Studio (stitch, split shots)
+│   │   ├── template.py         # Saved narrative templates CRUD
+│   │   ├── voice.py            # ElevenLabs voice clones
+│   │   ├── metadata.py, social.py, knowledge.py
+│   │   ├── auth.py, profile.py, credits.py, admin.py
+│   │   └── ...
+│   ├── services/
+│   │   ├── gemini.py, dalle.py, tts.py, veo.py, ffmpeg.py
+│   │   ├── elevenlabs.py       # Cloning + ElevenLabs TTS
+│   │   ├── whisper_align.py, subtitle_ass.py
 │   │   └── ...
 │   └── assets/                 # Generated files (gitignored)
-│       ├── images/
-│       ├── audio/
-│       ├── video/
-│       └── thumbnails/
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx             # Root component, routing, state management
-│   │   ├── pages/
-│   │   │   ├── HomePage.tsx          # Landing / create flow entry
-│   │   │   ├── TopicPage.tsx         # Topic discovery & idea selection
-│   │   │   ├── WorkspacePage.tsx     # Asset workstation (scenes table)
-│   │   │   ├── MotionStudioPage.tsx  # Motion video editing
-│   │   │   ├── PreviewPage.tsx       # Video preview & export
-│   │   │   ├── SocialIdeaPage.tsx    # Social post idea & config
-│   │   │   ├── SocialStudioPage.tsx  # Social post editing & export
-│   │   │   └── ...
+│   │   ├── pages/              # Topic, Workspace, Motion Studio, Preview, Account, Social, …
 │   │   ├── components/
-│   │   │   ├── ChartConfigPanel.tsx  # Chart data editor & capture
-│   │   │   ├── ChartRenderer.tsx     # Recharts-based chart rendering
+│   │   │   ├── ChartConfigPanel.tsx, NarrativeBuilder.tsx
+│   │   │   ├── NarrativeTemplatesManager.tsx, VoiceCloneManager.tsx
 │   │   │   └── ...
-│   │   ├── api/client.ts       # Backend API client (axios)
-│   │   ├── types/index.ts      # TypeScript type definitions
-│   │   └── lib/                # Chart templates, Supabase client
+│   │   └── api/client.ts
 │   └── package.json
 │
 └── README.md
@@ -95,13 +74,13 @@ FinContent AI is a full-stack application that automates the creation of financi
 ## Prerequisites
 
 - **Python 3.11+**
-- **Node.js 18+** (with npm)
-- **FFmpeg** — must be installed and available in PATH
-  - Required codecs: libx264, AAC
+- **Node.js 18+** (npm)
+- **FFmpeg** + **ffprobe** on `PATH` (video synthesis, chart WebM→MP4, voice sample WebM→WAV)
   - macOS: `brew install ffmpeg`
   - Ubuntu: `sudo apt install ffmpeg`
-- **Google Cloud API Key** — with access to Gemini, Imagen 3, Veo, and Cloud TTS
-- **Supabase Project** — for authentication and database
+- **Google AI API key** — Gemini, Imagen, Veo, Gemini TTS ([Google AI Studio](https://aistudio.google.com/apikey))
+- **Supabase project** — Auth + database ([Supabase](https://supabase.com))
+- **Optional: ElevenLabs API key** — voice cloning + clone-based TTS ([ElevenLabs](https://elevenlabs.io)); see [Voice cloning & ElevenLabs](#voice-cloning--elevenlabs) below
 
 ## Setup
 
@@ -112,86 +91,94 @@ git clone <repo-url>
 cd "AI video"
 ```
 
-### 2. Backend setup
+### 2. Database (Supabase)
+
+Create a project, then in **SQL Editor** run the migration files **in order**:
+
+1. `backend/migrations/001_init.sql`
+2. `backend/migrations/002_narrative_templates.sql`
+3. `backend/migrations/003_voice_clones.sql`
+
+This creates tables and RLS policies for profiles, narrative templates, voice clones, etc.
+
+### 3. Backend
 
 ```bash
 cd backend
-
-# Create and activate virtual environment
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# Create .env file with your API keys (see .env.example)
 cp .env.example .env
-# Edit .env and fill in your keys
+# Edit .env — see Environment Variables
 
-# Start the backend server
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The backend will be available at `http://localhost:8000`.
+Backend: `http://localhost:8000` — health: `http://localhost:8000/api/health`
 
-### 3. Frontend setup
+### 4. Frontend
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start the dev server
 npm run dev
 ```
 
-The frontend will be available at `http://localhost:5173`.
-
-### 4. Verify
-
-Open `http://localhost:5173` in your browser. The app should load and connect to the backend automatically.
-
-You can also check `http://localhost:8000/api/health` to verify the backend is running.
+Frontend: `http://localhost:5173`
 
 ## Environment Variables
 
-See `backend/.env.example` for all required environment variables:
+Copy `backend/.env.example` to `backend/.env` and fill in:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GEMINI_API_KEY` | Yes | Google AI API key (Gemini, Imagen, Veo, TTS) |
-| `SUPABASE_URL` | Yes | Your Supabase project URL |
-| `SUPABASE_ANON_KEY` | Yes | Supabase anonymous/public key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase service role key (server-side only) |
+| `GEMINI_API_KEY` | Yes | Google AI key (Gemini, Imagen, Veo, Gemini TTS) |
+| `SUPABASE_URL` | Yes | Supabase project URL |
+| `SUPABASE_ANON_KEY` | Yes | Supabase anon/public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Service role key (server only; never expose to frontend) |
+| `ELEVENLABS_API_KEY` | No | Enables **voice cloning** and **TTS with cloned voices**. Omit to use only Gemini TTS. |
 
 ## Key Features
 
-### Video Production Pipeline
-- **AI Topic Research** — Discovers trending financial topics with real-time data
-- **Scene-by-Scene Editing** — Full control over narration text, visuals, and audio per scene
-- **Multiple Visual Modes** — AI-generated images, interactive data charts, or motion video clips
-- **Motion Studio** — Generate and edit short video clips per scene using Google Veo
-- **Accurate Subtitles** — Word-level subtitle alignment using stable-ts forced alignment (not transcription)
-- **One-Click Video Synthesis** — Combines all assets into a final MP4 with burned-in subtitles
-- **YouTube Metadata** — AI-generated titles, descriptions, and thumbnails
+### Video production pipeline
 
-### Social Post Generation
-- **Multi-Platform** — Generates tailored content for LinkedIn, Instagram, and X (Twitter)
-- **Configurable Length** — Short (~50-80 words), Medium (~120-180 words), Long (~250-400 words)
-- **AI Image Generation** — Platform-appropriate images with suggested prompts
-- **Template System** — Customizable narrative templates for consistent branding
+- **Topic & idea** — Preset narrative styles, **saved custom templates**, or **Custom Template** (title + description → AI-generated beats).
+- **Scene editing** — Narration, AI image, **chart** (static PNG + optional **recorded chart animation**), or **Motion** (Veo).
+- **Chart vs Motion** — Chart animation is stored separately from Motion Studio (`chart_motion_url` vs `motion_url`) so the Motion column only reflects Veo/stitched clips.
+- **Motion Studio** — **Veo 3.1 Lite** for per-scene clips; stitch with narration audio.
+- **Subtitles** — Word-level alignment (stable-ts), burned with ASS/libass in final export.
+- **Synthesis** — One MP4 with optional transcript overlay.
 
-### Data Charts
-- **Live Chart Editor** — Edit chart data as JSON, preview in real-time
-- **Multiple Chart Types** — Line, Bar, and Pie charts with dark theme
-- **Financial Templates** — Pre-built templates for earnings trends, sector comparisons, market share
-- **Auto-Capture** — Charts are rendered in-browser and captured as images for video
+### Narrative templates
+
+- **Topic / Idea flow** — Custom template: enter a **template title**, describe the arc; AI returns tone and beats. Save to account or use for script generation.
+- **Account** — List, edit, delete saved templates; same AI-first flow as Idea page.
+
+### Voice cloning & ElevenLabs
+
+- **Account → Voice Cloning** — Record a sample (~15s target, WebM) or upload audio; backend normalizes (e.g. WebM → WAV) before ElevenLabs IVC.
+- **Limits** — Up to **3** clones per user (MVP); TTS with clones uses **ElevenLabs Flash v2.5** when a clone is selected in the workstation.
+- **Billing / API access** — ElevenLabs **free tiers often do not include full API access** for cloning or may be heavily limited. Teammates may need a **paid plan** or a **shared project key** from someone with API enabled. Do **not** commit real keys; share `.env` values through a secure channel.
+
+### Data charts
+
+- JSON editor, templates, **Generate Chart** with optional **animation recording** for the final video.
+
+### Social posts
+
+- LinkedIn / Instagram / X text + images; separate from the video pipeline.
 
 ## Notes
 
-- Generated assets (images, audio, video) are stored in `backend/assets/` and auto-cleaned after 72 hours
-- The `assets/` directory is gitignored — files are generated at runtime
-- Session state is persisted in the browser's sessionStorage, so refreshing won't lose your work
-- Video files use `faststart` for instant browser playback (moov atom at file start)
-- Subtitle alignment uses the "base" Whisper model — sufficient for forced alignment of known text
+- Generated media lives under `backend/assets/` (gitignored); startup cleanup removes files older than **72 hours**.
+- App state for the video flow is stored in **sessionStorage** (refresh keeps the session).
+- Final MP4s use **faststart** for web playback.
+- Subtitle alignment uses the **base** Whisper model — tuned for **forced alignment** of known text, not open-ended transcription.
+
+---
+
+## Contributing / team testing
+
+- Each developer needs their own `backend/.env` (never commit `.env`).
+- **Google + Supabase** keys are required for core flows.
+- **ElevenLabs** is optional; if the team shares one key, all usage counts against that account — prefer individual keys or a dedicated dev key when possible.
