@@ -34,6 +34,12 @@ export default function MotionStudioPage() {
   const [stitchedUrl, setStitchedUrl] = useState<string | null>(scene?.motion_url || null);
   const [error, setError] = useState("");
 
+  // Motion model selector — UI-only for now; backend is wired to Veo 3.1 Lite.
+  // Seedance option is a visual preview of the future multi-provider abstraction.
+  const [motionModel, setMotionModel] = useState<
+    "veo-3.1-lite" | "seedance-1.5-pro-fast"
+  >("veo-3.1-lite");
+
   // Reference image (image-to-video) state
   const [singleShotImage, setSingleShotImage] = useState<string | undefined>(undefined);
   const [loadingRefGen, setLoadingRefGen] = useState<Record<number | "single", boolean>>({});
@@ -470,6 +476,43 @@ export default function MotionStudioPage() {
           <audio controls src={BACKEND + scene.audio_url} style={{ height: 32, width: 200 }} />
           <span className="badge">{formatDuration(duration)}</span>
           <span className="badge">{aspectRatio}</span>
+        </div>
+      </div>
+
+      {/* ── Motion model selector ── */}
+      <div className="card mb-16">
+        <label
+          className="text-sm text-dim"
+          style={{ display: "block", marginBottom: 8 }}
+        >
+          Motion Model
+        </label>
+        <div className="radio-group">
+          <label
+            className={`radio-option ${motionModel === "veo-3.1-lite" ? "selected" : ""}`}
+          >
+            <input
+              type="radio"
+              name="motion-model"
+              checked={motionModel === "veo-3.1-lite"}
+              onChange={() => setMotionModel("veo-3.1-lite")}
+            />
+            <span>Veo 3.1 Lite Preview</span>
+          </label>
+          <label
+            className="radio-option"
+            style={{ opacity: 0.55, cursor: "not-allowed" }}
+            title="Coming soon"
+          >
+            <input
+              type="radio"
+              name="motion-model"
+              checked={motionModel === "seedance-1.5-pro-fast"}
+              onChange={() => setMotionModel("seedance-1.5-pro-fast")}
+              disabled
+            />
+            <span>Seedance 1.5 Pro Fast</span>
+          </label>
         </div>
       </div>
 

@@ -18,7 +18,6 @@ export interface NarrativeBeat {
 export interface NarrativeStructure {
   name: string;
   tone: string;
-  style_tags: string[];
   beats: NarrativeBeat[];
 }
 

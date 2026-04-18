@@ -9,6 +9,8 @@ import {
   uploadSceneImage,
   splitScene,
   generateOneScene,
+  listVoiceClones,
+  type VoiceClone,
   BACKEND,
 } from "../api/client";
 import type { SceneMode, ChartConfig } from "../types";
@@ -28,6 +30,9 @@ export default function WorkspacePage() {
   const isVertical = aspectRatio === "9:16";
 
   const [voice, setVoice] = useState("Kore");
+  // When set (format: "clone:<id>"), routes TTS to the user's ElevenLabs clone.
+  const [voiceCloneId, setVoiceCloneId] = useState<string | null>(null);
+  const [voiceClones, setVoiceClones] = useState<VoiceClone[]>([]);
   const [loadingImg, setLoadingImg] = useState<Record<number, boolean>>({});
   const [loadingAudio, setLoadingAudio] = useState<Record<number, boolean>>({});
   const [loadingAllImg, setLoadingAllImg] = useState(false);
@@ -57,6 +62,14 @@ export default function WorkspacePage() {
 
   // Knowledge Base feedback (passed via navigation state from TopicPage)
   const knowledgeUsed = !!(location.state as { knowledgeUsed?: boolean } | null)?.knowledgeUsed;
+
+  // Load the user's cloned voices once so the Voice picker can offer them.
+  // Silent failure (e.g. unauthenticated): user just sees the Gemini presets.
+  useEffect(() => {
+    listVoiceClones()
+      .then((d) => setVoiceClones(d.voices || []))
+      .catch(() => setVoiceClones([]));
+  }, []);
 
   const getSceneMode = (i: number): SceneMode => sceneModes[i] ?? scenes[i]?.mode ?? "image";
 
@@ -267,7 +280,7 @@ export default function WorkspacePage() {
     setLoadingAudio((s) => ({ ...s, [index]: true }));
     setAudioErrors((s) => ({ ...s, [index]: "" }));
     try {
-      const data = await generateAudio(scenes[index].narration, voice);
+      const data = await generateAudio(scenes[index].narration, voice, voiceCloneId);
       updateScene(index, { audio_url: data.audio_url, audio_duration: data.duration_sec });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -512,15 +525,34 @@ export default function WorkspacePage() {
       <div className="toolbar">
         <label className="text-sm text-dim">Voice:</label>
         <select
-          value={voice}
-          onChange={(e) => setVoice(e.target.value)}
-          style={{ width: 140 }}
+          value={voiceCloneId ? `clone:${voiceCloneId}` : voice}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v.startsWith("clone:")) {
+              setVoiceCloneId(v.slice("clone:".length));
+            } else {
+              setVoiceCloneId(null);
+              setVoice(v);
+            }
+          }}
+          style={{ width: voiceClones.length > 0 ? 200 : 140 }}
         >
-          {VOICES.map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
+          <optgroup label="Default voices">
+            {VOICES.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </optgroup>
+          {voiceClones.length > 0 && (
+            <optgroup label="My cloned voices">
+              {voiceClones.map((c) => (
+                <option key={c.id} value={`clone:${c.id}`}>
+                  {c.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <button
           className="btn btn-secondary btn-sm"

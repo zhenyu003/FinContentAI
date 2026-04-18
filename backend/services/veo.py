@@ -11,7 +11,7 @@ from google.genai import types
 
 from services.utils import get_gemini_client
 
-VEO_MODEL = "veo-2.0-generate-001"
+VEO_MODEL = "veo-3.1-lite-generate-preview"
 MOTIONS_DIR = os.path.join("assets", "video", "motions")
 _POLL_INTERVAL_SEC = 10
 _MAX_POLL_SEC = 600
@@ -182,7 +182,9 @@ def generate_motion_video(
                     duration_seconds=8,
                     aspect_ratio=aspect_ratio,
                     resolution="720p",
-                    person_generation="allow_adult",
+                    # Veo 3.x does not accept "allow_adult" (a Veo-2 value).
+                    # Veo 3.x only supports "allow_all" or "dont_allow".
+                    person_generation="allow_all",
                     number_of_videos=1,
                 ),
             )

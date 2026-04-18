@@ -34,7 +34,7 @@ app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 from routers import (
     topics, idea, opinion, scenes, image, audio, video, metadata,
     auth, profile, credits, knowledge, social, template,
-    motion, admin,
+    motion, admin, voice,
 )
 
 # Original content pipeline
@@ -53,6 +53,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
 app.include_router(credits.router, prefix="/api")
 app.include_router(knowledge.router, prefix="/api")
+app.include_router(voice.router, prefix="/api")
 
 # Social post generation
 app.include_router(social.router, prefix="/api")

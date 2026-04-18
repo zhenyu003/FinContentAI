@@ -60,12 +60,6 @@ def _normalize_narrative_template(data: dict, user_input: str) -> dict:
     """Ensure required keys and beat shape; fill gaps from user_input."""
     name = str(data.get("name") or "Untitled template").strip() or "Untitled template"
     tone = str(data.get("tone") or "professional").strip() or "professional"
-    tags = data.get("style_tags")
-    if not isinstance(tags, list):
-        tags = []
-    style_tags = [str(t).strip() for t in tags if str(t).strip()][:12]
-    if not style_tags:
-        style_tags = ["financial", "story-driven"]
 
     beats_raw = data.get("beats")
     beats = []
@@ -102,7 +96,7 @@ def _normalize_narrative_template(data: dict, user_input: str) -> dict:
                 "instruction": "Close with a clear next step or reflection prompt.",
             },
         ]
-    return {"name": name, "tone": tone, "style_tags": style_tags, "beats": beats}
+    return {"name": name, "tone": tone, "beats": beats}
 
 
 def _fallback_narrative_template(user_input: str) -> dict:
@@ -122,7 +116,6 @@ Output JSON with exactly this shape:
 {{
   "name": "Short memorable template name",
   "tone": "e.g. urgent, analytical, conversational",
-  "style_tags": ["tag1", "tag2"],
   "beats": [
     {{ "id": "1", "purpose": "Hook — introduce conflict", "instruction": "What to cover in this beat" }}
   ]

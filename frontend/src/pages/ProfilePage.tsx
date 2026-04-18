@@ -7,6 +7,8 @@ import {
   getCredits,
   getCreditTransactions,
 } from "../api/client";
+import NarrativeTemplatesManager from "../components/NarrativeTemplatesManager";
+import VoiceCloneManager from "../components/VoiceCloneManager";
 
 interface ProfileData {
   display_name: string;
@@ -277,6 +279,12 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+
+      {/* ── Voice Cloning (above Narrative Templates) ── */}
+      <VoiceCloneManager />
+
+      {/* ── Narrative Templates ── */}
+      <NarrativeTemplatesManager />
 
       {/* ── Credits Overview ── */}
       <div className="section">

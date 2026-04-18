@@ -151,8 +151,16 @@ export async function uploadSceneImage(file: File) {
   return res.data as { image_url: string };
 }
 
-export async function generateAudio(text: string, voice: string) {
-  const res = await api.post("/audio/generate", { text, voice });
+export async function generateAudio(
+  text: string,
+  voice: string,
+  voiceCloneId?: string | null,
+) {
+  const res = await api.post("/audio/generate", {
+    text,
+    voice,
+    voice_clone_id: voiceCloneId || undefined,
+  });
   return res.data as { audio_url: string; duration_sec: number };
 }
 
@@ -254,6 +262,53 @@ export async function generateNarrativeTemplate(userInput: string) {
   return res.data;
 }
 
+export interface SavedNarrativeTemplate {
+  id: string;
+  user_id: string;
+  name: string;
+  tone: string;
+  beats: { id: string; purpose: string; instruction: string }[];
+  source: "custom" | "ai_generated";
+  prompt: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listNarrativeTemplates() {
+  const res = await api.get("/template/narrative");
+  return res.data as { templates: SavedNarrativeTemplate[] };
+}
+
+export async function createNarrativeTemplate(data: {
+  name: string;
+  tone: string;
+  beats: { id: string; purpose: string; instruction: string }[];
+  source?: "custom" | "ai_generated";
+  prompt?: string | null;
+  overwrite?: boolean;
+}) {
+  const res = await api.post("/template/narrative", data);
+  return res.data as SavedNarrativeTemplate;
+}
+
+export async function updateNarrativeTemplate(
+  templateId: string,
+  data: {
+    name?: string;
+    tone?: string;
+    beats?: { id: string; purpose: string; instruction: string }[];
+    prompt?: string | null;
+  }
+) {
+  const res = await api.patch(`/template/narrative/${templateId}`, data);
+  return res.data as SavedNarrativeTemplate;
+}
+
+export async function deleteNarrativeTemplate(templateId: string) {
+  const res = await api.delete(`/template/narrative/${templateId}`);
+  return res.data as { deleted: boolean; id: string };
+}
+
 // ============ Social Post ============
 export async function generateSocialPostTemplate(input: string) {
   const res = await api.post("/template/social-generate", { input });
@@ -327,6 +382,39 @@ export async function getCreditTransactions(limit = 20) {
 export async function purchaseCredits(amount: number) {
   const res = await api.post("/credits/purchase", { amount, payment_method: "mock" });
   return res.data;
+}
+
+
+// ============ Voice Clones (ElevenLabs) ============
+export interface VoiceClone {
+  id: string;
+  user_id: string;
+  elevenlabs_voice_id: string;
+  name: string;
+  sample_filename: string | null;
+  sample_duration_sec: number | null;
+  created_at: string;
+}
+
+export async function listVoiceClones() {
+  const res = await api.get("/voice");
+  return res.data as { voices: VoiceClone[] };
+}
+
+export async function cloneVoice(name: string, file: File) {
+  const form = new FormData();
+  form.append("name", name);
+  form.append("file", file);
+  const res = await api.post("/voice/clone", form, {
+    timeout: 120_000, // ElevenLabs IVC takes 5-30s
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data as VoiceClone;
+}
+
+export async function deleteVoiceClone(cloneId: string) {
+  const res = await api.delete(`/voice/${cloneId}`);
+  return res.data as { deleted: boolean; id: string };
 }
 
 

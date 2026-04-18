@@ -594,6 +594,43 @@ textarea {
   font-style: italic;
 }
 
+.badge-saved {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  white-space: nowrap;
+}
+
+.template-option-delete {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.template-option-delete:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
 /* QA Follow-up Questions */
 .qa-item {
   margin-bottom: 20px;
@@ -761,40 +798,6 @@ textarea {
   margin: 0;
 }
 
-.narrative-saved-block {
-  padding-top: 4px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.narrative-saved-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.narrative-saved-item {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface2);
-  color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s;
-}
-
-.narrative-saved-item:hover {
-  border-color: var(--accent);
-}
-
 .template-preview-card {
   margin-top: 8px;
   padding: 20px;
@@ -818,21 +821,6 @@ textarea {
 .template-preview-value {
   font-size: 15px;
   line-height: 1.5;
-}
-
-.template-preview-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.style-tag-badge {
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: rgba(59, 130, 246, 0.15);
-  color: var(--accent);
-  border: 1px solid rgba(59, 130, 246, 0.35);
 }
 
 .template-preview-beats {
