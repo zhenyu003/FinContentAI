@@ -4,6 +4,7 @@ Google Veo video generation (Gemini API) for Motion clips.
 
 import os
 import re
+import subprocess
 import time
 import uuid
 
@@ -118,6 +119,52 @@ _VEO_MAX_RETRIES = 4
 _VEO_BASE_DELAY = 30  # seconds — Veo rate limits need longer waits
 
 
+def _person_generation_candidates(image_to_video: bool) -> list[str]:
+    """Order matches Gemini docs; API also varies by region (EU vs US), so we fall back."""
+    if image_to_video:
+        return ["allow_adult", "allow_all", "dont_allow"]
+    return ["allow_all", "allow_adult", "dont_allow"]
+
+
+def _is_person_generation_rejected(err_str: str) -> bool:
+    low = err_str.lower()
+    if "persongeneration" not in low:
+        return False
+    return "not supported" in low or "invalid_argument" in low
+
+
+def _strip_veo_model_audio(video_path: str) -> None:
+    """Drop Veo's baked-in model audio so clips use scene TTS in stitch/synthesis."""
+    tmp = video_path + ".noaudio.mp4"
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-map",
+                "0:v:0",
+                "-c:v",
+                "copy",
+                "-an",
+                tmp,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        os.replace(tmp, video_path)
+    except subprocess.CalledProcessError as e:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        tail = (e.stderr or "")[-800:]
+        print(f"[Veo] Could not strip model audio (using file as-is): {tail}")
+
+
 def _load_reference_image(path: str) -> types.Image:
     """Load a local image file into a types.Image for Veo image-to-video."""
     ext = os.path.splitext(path)[1].lower()
@@ -172,42 +219,65 @@ def generate_motion_video(
             )
         reference_image = _load_reference_image(reference_image_path)
 
+    image_to_video = reference_image is not None
+    candidates = _person_generation_candidates(image_to_video)
     operation = None
-    for attempt in range(_VEO_MAX_RETRIES):
-        try:
-            kwargs = dict(
-                model=VEO_MODEL,
-                prompt=text,
-                config=types.GenerateVideosConfig(
-                    duration_seconds=8,
-                    aspect_ratio=aspect_ratio,
-                    resolution="720p",
-                    # Veo 3.x does not accept "allow_adult" (a Veo-2 value).
-                    # Veo 3.x only supports "allow_all" or "dont_allow".
-                    person_generation="allow_all",
-                    number_of_videos=1,
-                ),
-            )
-            if reference_image is not None:
-                kwargs["image"] = reference_image
-            operation = client.models.generate_videos(**kwargs)
-            break  # success — move to polling
-        except Exception as e:
-            err_str = str(e)
-            is_rate_limit = any(s in err_str for s in ["429", "RESOURCE_EXHAUSTED", "quota"])
-            if is_rate_limit and attempt < _VEO_MAX_RETRIES - 1:
-                wait = _VEO_BASE_DELAY * (2 ** attempt)
-                print(f"[Veo] Rate limited (attempt {attempt + 1}), retrying in {wait}s...")
-                time.sleep(wait)
-                continue
-            if is_rate_limit:
-                raise RateLimitError(
-                    "Veo API rate limit exceeded. Please wait a minute and try again."
-                ) from e
-            raise
+    last_error: Exception | None = None
+
+    for person_gen in candidates:
+        for attempt in range(_VEO_MAX_RETRIES):
+            try:
+                kwargs = dict(
+                    model=VEO_MODEL,
+                    prompt=text,
+                    config=types.GenerateVideosConfig(
+                        duration_seconds=8,
+                        aspect_ratio=aspect_ratio,
+                        resolution="720p",
+                        person_generation=person_gen,
+                        number_of_videos=1,
+                    ),
+                )
+                if reference_image is not None:
+                    kwargs["image"] = reference_image
+                operation = client.models.generate_videos(**kwargs)
+                last_error = None
+                break
+            except Exception as e:
+                err_str = str(e)
+                last_error = e
+                if _is_person_generation_rejected(err_str):
+                    snippet = err_str[:220] + ("..." if len(err_str) > 220 else "")
+                    print(
+                        f"[Veo] person_generation={person_gen!r} rejected "
+                        f"({snippet}); trying next option."
+                    )
+                    operation = None
+                    break
+                is_rate_limit = any(
+                    s in err_str for s in ["429", "RESOURCE_EXHAUSTED", "quota"]
+                )
+                if is_rate_limit and attempt < _VEO_MAX_RETRIES - 1:
+                    wait = _VEO_BASE_DELAY * (2 ** attempt)
+                    print(
+                        f"[Veo] Rate limited (attempt {attempt + 1}), "
+                        f"retrying in {wait}s…"
+                    )
+                    time.sleep(wait)
+                    continue
+                if is_rate_limit:
+                    raise RateLimitError(
+                        "Veo API rate limit exceeded. Please wait a minute and try again."
+                    ) from e
+                raise
+        if operation is not None:
+            break
 
     if operation is None:
-        raise RuntimeError("Failed to start Veo generation")
+        msg = "Failed to start Veo generation"
+        if last_error is not None:
+            msg = f"{msg}: {last_error}"
+        raise RuntimeError(msg)
 
     deadline = time.monotonic() + _MAX_POLL_SEC
     while not operation.done:
@@ -225,22 +295,30 @@ def generate_motion_video(
     response = operation.response or operation.result
 
     if not response or not response.generated_videos:
-        # Try to extract safety filter / block reason from the response
-        detail_parts = []
+        # Surface API RAI / safety hints (GenerateVideosResponse has these fields).
+        detail_parts: list[str] = []
         if response:
+            rai_n = getattr(response, "rai_media_filtered_count", None)
+            rai_reasons = getattr(response, "rai_media_filtered_reasons", None)
+            if rai_n is not None:
+                detail_parts.append(f"filtered_count={rai_n}")
+            if rai_reasons:
+                detail_parts.append(f"reasons={rai_reasons}")
             for attr in ("prompt_feedback", "filters", "block_reason", "blocked_reason"):
                 val = getattr(response, attr, None)
                 if val:
                     detail_parts.append(f"{attr}={val}")
-            # Some SDK versions expose generated_videos as empty list with filter reasons
             if hasattr(response, "generated_videos") and response.generated_videos is not None:
                 for gv in response.generated_videos:
                     reason = getattr(gv, "finish_reason", None) or getattr(gv, "block_reason", None)
                     if reason:
                         detail_parts.append(f"video_reason={reason}")
-        extra = (" | " + "; ".join(detail_parts)) if detail_parts else ""
+        extra = (" Details: " + "; ".join(detail_parts)) if detail_parts else ""
         print(f"[Veo] Full response object: {response}")
-        raise ValueError(f"Veo returned no generated_videos (content may have been filtered){extra}")
+        raise ValueError(
+            "Veo returned no video output. This is usually a safety / content-policy block "
+            f"on the prompt or reference image.{extra}"
+        )
 
     video_part = response.generated_videos[0].video
     raw = client.files.download(file=video_part)
@@ -252,5 +330,7 @@ def generate_motion_video(
     abs_path = os.path.abspath(rel_path)
     with open(abs_path, "wb") as f:
         f.write(raw)
+
+    _strip_veo_model_audio(abs_path)
 
     return rel_path

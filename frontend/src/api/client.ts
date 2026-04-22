@@ -2,6 +2,25 @@ import axios from "axios";
 import { supabase } from "../lib/supabase";
 import type { SocialPostTemplate } from "../types";
 
+/** Prefer FastAPI `detail` over generic Axios messages like "Request failed with status code 500". */
+export function formatApiError(e: unknown): string {
+  if (axios.isAxiosError(e) && e.response?.data != null) {
+    const data = e.response.data as { detail?: unknown };
+    if (typeof data.detail === "string") return data.detail;
+    if (Array.isArray(data.detail)) {
+      const parts = data.detail.map((item) => {
+        if (item && typeof item === "object" && "msg" in item) {
+          return String((item as { msg: unknown }).msg);
+        }
+        return JSON.stringify(item);
+      });
+      return parts.join("; ");
+    }
+  }
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
 /** Shared axios instance (auth interceptors). Use from `utils/` when avoiding circular imports. */
 export const api = axios.create({ baseURL: "http://localhost:8000/api", timeout: 120000 });
 export const BACKEND = "http://localhost:8000";

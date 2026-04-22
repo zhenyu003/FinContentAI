@@ -231,6 +231,8 @@ def synthesize_video(scenes: list[dict], aspect_ratio: str = "16:9", include_tra
                     "-i", audio_path,
                     "-t", str(audio_dur),
                     "-vf", vf_scale,
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
                     "-c:v", "libx264",
                     "-c:a", "aac",
                     "-b:a", "192k",
@@ -262,6 +264,8 @@ def synthesize_video(scenes: list[dict], aspect_ratio: str = "16:9", include_tra
                     "-loop", "1",
                     "-i", image_path,
                     "-i", audio_path,
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
                     "-c:v", "libx264",
                     "-c:a", "aac",
                     "-b:a", "192k",
@@ -480,6 +484,8 @@ def stitch_motion_shots(
         concat_raw_path = os.path.join(save_dir, f"concat_raw_{job_id}.mp4")
         temp_files.append(concat_raw_path)
 
+        # Video only: Veo clips may contain model-generated audio; we mux scene
+        # narration in step 3. Without -an, concat + later -shortest can keep Veo audio.
         subprocess.run(
             [
                 "ffmpeg", "-y",
@@ -489,6 +495,7 @@ def stitch_motion_shots(
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",
                 "-r", "30",
+                "-an",
                 concat_raw_path,
             ],
             capture_output=True,
@@ -513,7 +520,7 @@ def stitch_motion_shots(
                     "-t", str(audio_duration),
                     "-c:v", "libx264",
                     "-pix_fmt", "yuv420p",
-                    "-c:a", "copy",
+                    "-an",
                     trimmed_path,
                 ],
                 capture_output=True,
@@ -539,6 +546,7 @@ def stitch_motion_shots(
                         "-c:v", "libx264",
                         "-pix_fmt", "yuv420p",
                         "-r", "30",
+                        "-an",
                         faded_path,
                     ],
                     capture_output=True,
@@ -558,6 +566,7 @@ def stitch_motion_shots(
                         "-c:v", "libx264",
                         "-pix_fmt", "yuv420p",
                         "-r", "30",
+                        "-an",
                         frozen_path,
                     ],
                     capture_output=True,
@@ -574,6 +583,8 @@ def stitch_motion_shots(
                 "ffmpeg", "-y",
                 "-i", adjusted_video_path,
                 "-i", audio_path,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
                 "-c:v", "libx264",
                 "-c:a", "aac",
                 "-b:a", "192k",

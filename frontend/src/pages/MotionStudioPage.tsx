@@ -8,6 +8,7 @@ import {
   generateImage,
   uploadSceneImage,
   BACKEND,
+  formatApiError,
 } from "../api/client";
 import type { ShotData } from "../types";
 
@@ -86,7 +87,7 @@ export default function MotionStudioPage() {
       updateShots(newShots);
       setStitchedUrl(null);
     } catch (e: unknown) {
-      setError("Failed to split shots: " + (e instanceof Error ? e.message : String(e)));
+      setError("Failed to split shots: " + formatApiError(e));
     } finally {
       setLoadingSplit(false);
     }
@@ -131,7 +132,7 @@ export default function MotionStudioPage() {
 
       return true;
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = formatApiError(e);
       const isRateLimit = msg.includes("429") || msg.includes("rate limit") || msg.includes("quota");
       if (isRateLimit) {
         setError(`Shot ${shotIdx + 1}: API rate limited. Waiting before retry...`);
@@ -168,7 +169,7 @@ export default function MotionStudioPage() {
         updateShots([...currentShots]);
         return true;
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = formatApiError(e);
         const isRateLimit = msg.includes("429") || msg.includes("rate limit") || msg.includes("quota");
         setError(isRateLimit
           ? `Shot ${i + 1}: API rate limited. Waiting before retry...`
@@ -237,7 +238,7 @@ export default function MotionStudioPage() {
       });
       setStitchedUrl(data.video_url);
     } catch (e: unknown) {
-      setError("Stitch failed: " + (e instanceof Error ? e.message : String(e)));
+      setError("Stitch failed: " + formatApiError(e));
     } finally {
       setLoadingStitch(false);
     }
@@ -258,7 +259,7 @@ export default function MotionStudioPage() {
       });
       setStitchedUrl(data.video_url);
     } catch (e: unknown) {
-      setError("Motion generation failed: " + (e instanceof Error ? e.message : String(e)));
+      setError("Motion generation failed: " + formatApiError(e));
     } finally {
       setLoadingDirect(false);
     }
@@ -282,7 +283,7 @@ export default function MotionStudioPage() {
       if (shotIdx === "single") setSingleShotImage(data.image_url);
       else setShotRefImage(shotIdx, data.image_url);
     } catch (e: unknown) {
-      setError("Reference image generation failed: " + (e instanceof Error ? e.message : String(e)));
+      setError("Reference image generation failed: " + formatApiError(e));
     } finally {
       setLoadingRefGen((s) => ({ ...s, [shotIdx]: false }));
     }
@@ -300,7 +301,7 @@ export default function MotionStudioPage() {
       if (shotIdx === "single") setSingleShotImage(data.image_url);
       else setShotRefImage(shotIdx, data.image_url);
     } catch (e: unknown) {
-      setError("Upload failed: " + (e instanceof Error ? e.message : String(e)));
+      setError("Upload failed: " + formatApiError(e));
     } finally {
       setLoadingRefUpload((s) => ({ ...s, [shotIdx]: false }));
     }
